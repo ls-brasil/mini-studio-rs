@@ -37,17 +37,21 @@ cargo build --release
 
 `cargo run` usa o perfil de desenvolvimento otimizado. O executável de produção fica em `target/release/mini-studio-rs.exe`. Node.js, npm e pnpm são opcionais; `package.json` contém apenas atalhos para Cargo, sem dependências JavaScript.
 
-| Atalho npm/pnpm | Comando |
-| --- | --- |
-| `run dev` | `cargo run` |
-| `run build` | `cargo build --release` |
-| `run build:debug` | `cargo build` |
-| `run check` | `cargo check` |
-| `test` | `cargo test` |
-| `run test:capture` | Teste opcional de captura real na sessão Windows |
-| `run lint` | `cargo clippy --all-targets -- -D warnings` |
-| `run fmt` | `cargo fmt` |
-| `run fmt:check` | `cargo fmt -- --check` |
-| `run benchmark -- ...` | `cargo run --release -- ...` |
+| Atalho npm/pnpm        | Comando                                          |
+| ---------------------- | ------------------------------------------------ |
+| `run dev`              | `cargo run`                                      |
+| `run build`            | `cargo build --release`                          |
+| `run build:debug`      | `cargo build`                                    |
+| `run check`            | `cargo check`                                    |
+| `test`                 | `cargo test`                                     |
+| `run test:capture`     | Teste opcional de captura real na sessão Windows |
+| `run lint`             | `cargo clippy --all-targets -- -D warnings`      |
+| `run fmt`              | `cargo fmt`                                      |
+| `run fmt:check`        | `cargo fmt -- --check`                           |
+| `run benchmark -- ...` | `cargo run --release -- ...`                     |
+
+## Próximos recursos definidos
+
+O escopo futuro inclui **imagens como fonte da composição** e **câmera virtual para disponibilizar a composição em outros aplicativos**. Ambos estão planejados e ainda não implementados. Requisitos, etapas e critérios de aceite estão em [Imagens e câmera virtual](docs/imagens-e-camera-virtual.md).
 
 Consulte [as decisões do MVP](docs/mvp.md) e [a medição opcional de desempenho](docs/desempenho.md). Os comandos de teste estão disponíveis para uso posterior; a validação funcional desta migração será feita pelo usuário.

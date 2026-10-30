@@ -6,6 +6,12 @@ Validar uma versão leve do OBS Studio com captura de uma tela ou janela e uma c
 
 Áudio, gravação de vídeo, transmissão, câmera virtual e múltiplas cenas não fazem parte desta etapa.
 
+## Expansão definida após o MVP
+
+Em 30/10/2026, foram adicionados ao escopo futuro **imagens como fonte** e **saída por câmera virtual**. Eles ainda não estão implementados e não alteram a descrição das funcionalidades atuais acima. O plano está em [Imagens e câmera virtual](imagens-e-camera-virtual.md), com requisitos propostos e critérios para validação pelo usuário.
+
+Áudio, gravação, transmissão e múltiplas cenas continuam sem compromisso de implementação nesta expansão.
+
 ## Arquitetura atual: aplicativo nativo
 
 - **Interface:** Rust, egui/eframe, com renderização por wgpu/Direct3D 12. O aplicativo não inicia WebView ou runtime JavaScript.
