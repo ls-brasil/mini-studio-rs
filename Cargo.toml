@@ -1,0 +1,32 @@
+[package]
+name = "mini-studio-rs"
+version = "0.2.0"
+edition = "2024"
+rust-version = "1.88"
+description = "Mini Studio nativo: captura de tela, janela e câmera"
+authors = ["LS Brasil"]
+
+[dependencies]
+eframe = { version = "0.33.3", default-features = false, features = ["default_fonts", "wgpu"] }
+wgpu = { version = "27", default-features = false, features = ["dx12", "wgsl", "std"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
+rfd = "0.15"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+xcap = "0.9.8"
+windows-capture = "2.0.1"
+fast_image_resize = { version = "6.1", features = ["only_u8x4"] }
+windows = { version = "0.62", features = ["Win32_Media_MediaFoundation", "Win32_System_Com", "Win32_System_Com_StructuredStorage"] }
+windows-core = "0.62"
+
+[profile.dev]
+opt-level = 2
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true

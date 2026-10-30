@@ -1,56 +1,43 @@
 # Decisões do MVP
 
-## Objetivo e escopo
+## Escopo
 
-Validar a ideia de uma versão leve do OBS Studio com captura de tela, janela e câmera. A prioridade é ter um fluxo funcional e simples, com interface em português, antes de investir em acabamento visual ou ampliar o produto.
-
-A composição aceita uma tela **ou** janela como fonte principal e uma câmera opcional. A câmera ocupa a prévia quando está sozinha e pode aparecer sobreposta à fonte principal, com ajuste de canto, tamanho e espelhamento. O resultado pode ser salvo como imagem PNG.
+Validar uma versão leve do OBS Studio com captura de uma tela ou janela e uma câmera. A prioridade é funcionamento, fluidez e consumo de recursos. A composição permite câmera sozinha ou sobreposta, com ajustes de canto, tamanho e espelhamento, e salvamento PNG em 1280 × 720.
 
 Áudio, gravação de vídeo, transmissão, câmera virtual e múltiplas cenas não fazem parte desta etapa.
 
-## Arquitetura
+## Arquitetura atual: aplicativo nativo
 
-- **Aplicativo:** Tauri 2 com backend Rust; arquivos HTML, CSS e JavaScript em `src/`, sem bundler.
-- **Tela/janela:** `xcap` enumera fontes e captura quadros no backend. O frontend solicita quadros sequencialmente, com alvo de 12 FPS, evitando acumular solicitações.
-- **Transporte:** quadros JPEG pelo IPC do Tauri, limitados a 1280 × 720 e com proporção preservada.
-- **Câmera:** `getUserMedia` no WebView2, solicitando somente vídeo e usando a permissão do usuário.
-- **Composição:** canvas de 1280 × 720 (16:9) combina a fonte principal e a câmera. O PNG exportado corresponde à composição, não à resolução original do monitor.
-- **Salvamento:** diálogo nativo para escolher o destino do PNG.
+- **Interface:** Rust, egui/eframe, com renderização por wgpu/Direct3D 12. O aplicativo não inicia WebView ou runtime JavaScript.
+- **Tela/janela:** Windows Graphics Capture mantém uma sessão por fonte. Somente o quadro mais recente é disponibilizado ao consumidor, evitando fila de quadros antigos.
+- **Preparação:** redução para caber em 1280 × 720, preservando proporção, com redimensionamento SIMD via `fast_image_resize`.
+- **Câmera:** captura nativa pelo Windows Media Foundation, sem `getUserMedia` ou permissão do navegador.
+- **Prévia:** texturas e composição na GPU. O aplicativo solicita atualização quando há quadros ou interação; o alvo da captura é 30 FPS.
+- **PNG:** composição em CPU apenas ao salvar, usando as mesmas funções de geometria da prévia. O arquivo tem fundo opaco e resolução 1280 × 720; o seletor de destino é nativo.
+- **Build:** `Cargo.toml` na raiz; `cargo run` e `cargo build --release`. O `package.json` oferece somente atalhos opcionais.
 
-A abordagem de quadros individuais reduz o esforço inicial de integração. A taxa real depende da resolução, do computador e da fonte. Este MVP não promete captura de jogos ou vídeo de alta fluidez; uma continuidade pode exigir outro pipeline de captura e composição.
+O objetivo de pelo menos 30 FPS com baixo consumo de CPU depende de validação na máquina de uso. Uma fonte estática pode gerar menos quadros. Configurar a cadência para 30 FPS não comprova a taxa efetivamente exibida.
 
-## Limitações conhecidas
+## Limitações e validação
 
-- Mantenha a janela capturada aberta e restaurada. Janelas minimizadas ou fechadas deixam de ser fontes válidas.
-- Conteúdo protegido e alguns aplicativos com aceleração gráfica podem falhar ou produzir imagem preta. Experimente capturar a tela nesses casos.
-- Capturar a tela que contém o Mini Studio gera repetição da própria prévia. Outra tela ou uma janela específica evita esse efeito.
-- A câmera depende das permissões do WebView2 e do Windows e pode estar indisponível quando outro aplicativo a utiliza.
-- O alvo inicial é Windows. A disponibilidade multiplataforma das dependências não significa validação do aplicativo em macOS ou Linux.
+- O alvo é Windows 10 versão 1903/build 18362 ou superior, com Direct3D 12 e drivers adequados. O mínimo das APIs de captura está documentado para [janela](https://learn.microsoft.com/en-us/windows/win32/api/windows.graphics.capture.interop/nf-windows-graphics-capture-interop-igraphicscaptureiteminterop-createforwindow) e [monitor](https://learn.microsoft.com/en-us/windows/win32/api/windows.graphics.capture.interop/nf-windows-graphics-capture-interop-igraphicscaptureiteminterop-createformonitor).
+- Janelas minimizadas não aparecem no seletor. Uma fonte já conectada pode pausar ao minimizar e retomar ao restaurar.
+- Conteúdo protegido pode produzir imagem preta ou impedir a captura.
+- Capturar a tela que contém o Mini Studio causa repetição da própria prévia.
+- A câmera depende das permissões do Windows, dos formatos aceitos e da disponibilidade do dispositivo.
 
-## Checklist de validação manual
+A validação funcional desta versão fica com o usuário. Roteiro:
 
-Os itens abaixo são um roteiro de validação, não um registro de testes já executados.
+- [ ] Capturar cada monitor e observar a prévia com conteúdo em movimento.
+- [ ] Capturar, redimensionar, minimizar, restaurar e fechar uma janela.
+- [ ] Testar câmera sozinha e sobreposta, canto, tamanho e espelhamento.
+- [ ] Testar câmera indisponível e desconexão do dispositivo.
+- [ ] Trocar, remover e encerrar fontes, confirmando liberação da câmera.
+- [ ] Salvar e abrir o PNG, conferir composição e cancelar o diálogo de salvamento.
+- [ ] Observar FPS, CPU e memória durante alguns minutos; registrar resolução e fonte utilizadas.
 
-- [ ] Selecionar cada monitor disponível e confirmar que a prévia acompanha mudanças na tela.
-- [ ] Selecionar uma janela, movimentá-la, redimensioná-la e confirmar a captura.
-- [ ] Fechar ou minimizar a janela capturada e verificar a mensagem de erro e a possibilidade de selecionar outra fonte.
-- [ ] Abrir a câmera sozinha e depois junto de uma tela/janela; verificar canto, tamanho e espelho.
-- [ ] Negar a permissão ou desconectar a câmera e verificar se é possível tentar novamente.
-- [ ] Trocar fontes, cancelar os seletores e remover fontes sem deixar capturas anteriores ativas.
-- [ ] Salvar um PNG, abri-lo e conferir a composição e as dimensões; cancelar o diálogo de salvamento.
-- [ ] Encerrar todas as capturas e confirmar que a câmera foi liberada.
+## Histórico da migração em 30/10/2026
 
-Os comandos de build e testes automatizados documentados no README não substituem esta validação com dispositivos reais.
+A primeira versão usou Tauri/WebView2, captura individual via xcap/GDI e JPEG, com limite de 12 FPS. Uma medição pontual daquela versão release indicou 11–12 FPS. Em seguida, o backend passou a WGC persistente e transporte de quadros RGBA para o frontend web.
 
-## Verificação realizada em 30/10/2026
-
-- `cargo check`, `cargo fmt --check` e Clippy com `-D warnings`: aprovados.
-- Rust: três testes unitários de JPEG, proporção, limites e validação PNG aprovados; dois testes opcionais de captura real (monitor e janela) aprovados nesta sessão Windows.
-- Interface: seis testes aprovados, incluindo composição, payload PNG, troca de fontes, erro de captura, permissão negada, cancelamento durante conexão e encerramento dos tracks. O dispositivo de câmera é simulado pelo Edge e a ponte Tauri é substituída nesses testes.
-- Aplicativo Tauri/WebView2: abertura da interface, captura real de monitor, troca para janela e composição com câmera simulada verificadas, sem erros JavaScript observados.
-- Build de produção gerado com `cargo tauri build --no-bundle`. No executável release, a captura de janela mostrou 11–12 FPS em quatro amostras de um segundo, sem erros JavaScript. Essa medição é pontual nesta máquina, não um benchmark geral.
-- Ainda pendentes: câmera física, múltiplos dispositivos, desconexão física e interação manual com o diálogo de salvamento.
-
-Em debug, o teste nativo levou cerca de 430 ms por captura/codificação/decodificação; a prévia integrada ficou próxima de 2 FPS durante a compilação em paralelo. O limite de 12 FPS não é uma garantia. Use o build de produção para avaliar desempenho.
-
-Referências técnicas: [XCap](https://github.com/nashaofu/xcap), [resposta binária do Tauri](https://docs.rs/tauri/latest/tauri/ipc/struct.Response.html) e [captura de câmera com getUserMedia](https://developer.mozilla.org/en-US/docs/Web/API/MediaDevices/getUserMedia).
+O usuário pediu a remoção do WebView. A implementação atual substitui a interface por egui/eframe e a câmera por Media Foundation. Resultados e testes das versões Tauri anteriores não comprovam funcionamento ou desempenho desta migração nativa. O usuário solicitou compilar e receber instruções para realizar a validação pessoalmente.

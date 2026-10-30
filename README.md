@@ -1,76 +1,53 @@
 # Mini Studio
 
-MVP de um estúdio de captura leve, inspirado no OBS Studio, feito com Rust, Tauri 2 e JavaScript. O objetivo desta versão é validar a captura e a composição de fontes no Windows.
+MVP nativo para Windows, inspirado no OBS Studio. Interface em Rust com egui/eframe e renderização pela GPU via wgpu/Direct3D 12. Não usa Tauri, WebView2, HTML ou JavaScript no aplicativo atual.
 
-## Recursos
+## Executar a versão compilada
 
-- Captura de uma tela ou de uma janela, com seleção da fonte.
-- Captura de uma câmera, sozinha ou sobreposta à tela/janela.
-- Ajustes de canto, tamanho e espelhamento da câmera.
-- Prévia da composição em 1280 × 720 (16:9).
-- Salvamento da composição em PNG, com diálogo para escolher o arquivo.
-- Remoção individual de fontes e encerramento de todas as capturas.
+Abra `target/release/mini-studio-rs.exe` ou execute na raiz:
 
-Há no máximo uma tela/janela e uma câmera ativas por vez. Áudio, gravação de vídeo, transmissão, câmera virtual e gerenciamento de cenas ficam fora deste MVP.
+```powershell
+.\target\release\mini-studio-rs.exe
+```
 
-## Executar
+## Validar o MVP
 
-Pré-requisitos no Windows:
+1. Clique em **Capturar tela**, escolha um monitor e confira a prévia com conteúdo em movimento.
+2. Troque para **Capturar janela**, selecione uma janela aberta e experimente mover e redimensionar seu conteúdo. Minimize e restaure para verificar a retomada.
+3. Adicione uma câmera. Teste câmera sozinha e sobreposta à tela/janela, incluindo tamanho, canto e espelhamento.
+4. Use **Salvar imagem PNG**, abra o arquivo e confira se corresponde à composição.
+5. Remova fontes ou clique em **Parar tudo** e confira se a câmera foi liberada.
 
-- Rust com toolchain MSVC.
-- Visual Studio Build Tools com ferramentas de C++ e Windows SDK.
-- Microsoft Edge WebView2 Runtime.
-- Tauri CLI 2, instalável com `cargo install tauri-cli --version "^2" --locked`.
+A composição aceita uma tela **ou** janela e uma câmera, com saída PNG de 1280 × 720. Áudio, gravação de vídeo, transmissão e câmera virtual ficam fora deste MVP.
+
+Para avaliar fluidez, mantenha animação ou vídeo em movimento na fonte. O indicador conta quadros novos; uma fonte parada pode enviar menos quadros. Observe também CPU e memória do `mini-studio-rs.exe` no Gerenciador de Tarefas. O objetivo é pelo menos 30 FPS com baixo consumo de CPU; o desempenho desta versão fica para sua validação.
+
+Capturar o monitor que contém o próprio Mini Studio gera repetição da prévia. Outra tela ou uma janela específica evita esse efeito. A câmera precisa estar habilitada nas permissões do Windows e disponível para uso.
+
+## Compilar e desenvolver
+
+Requisitos: Windows 10 versão 1903/build 18362 ou superior, GPU/driver com Direct3D 12, Rust MSVC e Visual Studio Build Tools com C++ e Windows SDK. A captura de janela/monitor usa Windows Graphics Capture; o mínimo dessas APIs consta na [documentação da Microsoft](https://learn.microsoft.com/en-us/windows/win32/api/windows.graphics.capture.interop/nf-windows-graphics-capture-interop-igraphicscaptureiteminterop-createforwindow).
 
 Na raiz do projeto:
 
 ```powershell
-cargo tauri dev
+cargo run
+cargo build --release
 ```
 
-### Atalhos do package.json
+`cargo run` usa o perfil de desenvolvimento otimizado. O executável de produção fica em `target/release/mini-studio-rs.exe`. Node.js, npm e pnpm são opcionais; `package.json` contém apenas atalhos para Cargo, sem dependências JavaScript.
 
-Com Node.js 20 ou superior, use `npm install` (ou `pnpm install`) para instalar as ferramentas de teste. O aplicativo continua sem depender de um build JavaScript.
-
-| Comando | Ação |
+| Atalho npm/pnpm | Comando |
 | --- | --- |
-| `npm run dev` | Inicia o aplicativo com recarga durante o desenvolvimento |
-| `npm run build` | Gera o executável de produção, sem instalador |
-| `npm run build:debug` | Compila o executável de desenvolvimento |
-| `npm run check` | Verifica a sintaxe JavaScript e compila a checagem Rust |
-| `npm test` | Executa os testes da interface e os testes unitários Rust |
-| `npm run test:ui` | Testa composição e ciclo de vida das fontes no Edge headless |
-| `npm run test:rust` | Executa apenas os testes Rust |
-| `npm run test:capture` | Testa captura real de monitor e janela na sessão Windows atual |
-| `npm run lint` | Executa Clippy sem permitir avisos |
-| `npm run fmt` | Formata o código Rust |
-| `npm run fmt:check` | Confere a formatação Rust |
+| `run dev` | `cargo run` |
+| `run build` | `cargo build --release` |
+| `run build:debug` | `cargo build` |
+| `run check` | `cargo check` |
+| `test` | `cargo test` |
+| `run test:capture` | Teste opcional de captura real na sessão Windows |
+| `run lint` | `cargo clippy --all-targets -- -D warnings` |
+| `run fmt` | `cargo fmt` |
+| `run fmt:check` | `cargo fmt -- --check` |
+| `run benchmark -- ...` | `cargo run --release -- ...` |
 
-Os mesmos scripts funcionam com `pnpm` no lugar de `npm`. Os testes da interface exigem Microsoft Edge instalado; usam câmera simulada e substituem somente a ponte nativa de captura/salvamento. Os testes `test:capture` exigem desktop interativo com monitor e uma janela aberta.
-
-Para compilar o executável de produção sem gerar instalador:
-
-```powershell
-cargo tauri build --no-bundle
-```
-
-O executável fica em `src-tauri/target/release/mini-studio-rs.exe`. O frontend é servido diretamente de `src/`, sem etapa de build com npm.
-
-## Usar
-
-1. Adicione uma tela ou janela e selecione a fonte desejada.
-2. Adicione uma câmera e permita seu uso quando solicitado. Também é possível começar apenas com a câmera.
-3. Ajuste a sobreposição da câmera e confira a prévia.
-4. Salve uma imagem PNG ou encerre as capturas quando terminar.
-
-A captura da tela que contém o próprio Mini Studio produz o efeito de repetição da prévia. Para evitá-lo, capture outra tela ou uma janela específica.
-
-## Verificação
-
-```powershell
-cargo check --manifest-path src-tauri/Cargo.toml
-cargo test --manifest-path src-tauri/Cargo.toml
-cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
-```
-
-Consulte [as decisões do MVP, limitações e checklist manual](docs/mvp.md) para validar dispositivos e permissões reais. O alvo inicial de validação é Windows.
+Consulte [as decisões do MVP](docs/mvp.md) e [a medição opcional de desempenho](docs/desempenho.md). Os comandos de teste estão disponíveis para uso posterior; a validação funcional desta migração será feita pelo usuário.
