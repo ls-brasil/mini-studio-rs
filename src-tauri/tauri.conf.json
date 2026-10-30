@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "mini-studio-rs",
+  "productName": "Mini Studio",
   "version": "0.1.0",
   "identifier": "com.saulo.mini-studio",
   "build": {
@@ -10,9 +10,11 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "mini-studio-rs",
-        "width": 800,
-        "height": 600
+        "title": "Mini Studio",
+        "width": 1200,
+        "height": 800,
+        "minWidth": 900,
+        "minHeight": 650
       }
     ],
     "security": {
