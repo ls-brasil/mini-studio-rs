@@ -21,11 +21,19 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 xcap = "0.9.8"
-image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
 rfd = "0.15"
+windows-capture = "2.0.1"
+fast_image_resize = { version = "6.1", features = ["only_u8x4"] }
 
 # A conversão dos quadros precisa ser rápida também durante a validação em debug.
 [profile.dev.package.image]
+opt-level = 3
+
+[profile.dev.package.fast_image_resize]
+opt-level = 3
+
+[profile.dev.package.windows-capture]
 opt-level = 3
 
 

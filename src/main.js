@@ -1,4 +1,5 @@
 import { fitRect, cameraRect, mediaError } from './studio.js';
+import { decodeFrame } from './preview.js';
 
 const $ = (id) => document.getElementById(id);
 const invoke = window.__TAURI__?.core.invoke;
@@ -18,12 +19,51 @@ let dialogVersion = 0;
 let dialogKind = null;
 let dialogBusy = false;
 let snapshotBusy = false;
-let frameTimer;
-let frameRequest = Promise.resolve();
+let pendingDesktop = null;
+let sessionOperations = Promise.resolve();
 let frames = 0;
 let cameraFrames = 0;
-let lastVideoTime = -1;
-let lastPaint = 0;
+let cameraCallback = 0;
+let cameraCallbackIsVideo = false;
+let cameraRevision = 0;
+let paintedCameraRevision = 0;
+let paintRequest = 0;
+let nextPaintAt = 0;
+let dirty = false;
+const FRAME_INTERVAL = 1000 / 30;
+const metrics = window.__miniStudioMetrics = {
+  capturedFrames: 0, presentedFrames: 0, captureTotalMs: 0,
+  decodeTotalMs: 0, paintTotalMs: 0, compositions: 0,
+  captureIntervalsMs: [], presentationIntervalsMs: [],
+};
+let lastCaptureAt = 0;
+let lastPresentationAt = 0;
+
+function recordInterval(samples, elapsed) {
+  samples.push(elapsed);
+  if (samples.length > 300) samples.shift();
+}
+
+function sessionOperation(operation) {
+  const result = sessionOperations.catch(() => {}).then(operation);
+  sessionOperations = result.then(() => {}, () => {});
+  return result;
+}
+
+function releaseSession(sessionId) {
+  if (!sessionId) return Promise.resolve();
+  return sessionOperation(() => invoke('stop_capture', { sessionId })).catch((error) => {
+    notify(`Não foi possível encerrar a sessão de captura: ${String(error)}`, true);
+  });
+}
+
+function cancelPendingDesktop() {
+  if (!pendingDesktop) return;
+  pendingDesktop.cancelled = true;
+  releaseSession(pendingDesktop.sessionId);
+  pendingDesktop.sessionId = null;
+  pendingDesktop = null;
+}
 
 function notify(message, error = false) {
   $('notice').textContent = message;
@@ -71,14 +111,16 @@ function updateUI() {
     $('source-list').append(empty);
   }
   $('resolution').textContent = '1280 × 720';
-  paint();
+  requestPaint();
 }
 
 function stopDesktop() {
   desktopVersion++;
-  clearTimeout(frameTimer);
+  releaseSession(desktop?.sessionId);
   desktop?.frame?.close();
   desktop = null;
+  lastCaptureAt = 0;
+  lastPresentationAt = 0;
   frames = 0;
   updateUI();
 }
@@ -88,6 +130,9 @@ function stopCamera() {
   const previous = camera;
   camera = null;
   connectingCamera = null;
+  if (cameraCallbackIsVideo) video.cancelVideoFrameCallback(cameraCallback);
+  else cancelAnimationFrame(cameraCallback);
+  cameraCallback = 0;
   if (previous) previous.stream.getTracks().forEach((track) => track.stop());
   video.pause();
   video.srcObject = null;
@@ -99,6 +144,7 @@ function closeDialog() {
   dialogVersion++;
   cameraVersion++;
   dialogBusy = false;
+  cancelPendingDesktop();
   if (connectingCamera && camera === connectingCamera) stopCamera();
   $('source-dialog').close();
   updateUI();
@@ -111,50 +157,95 @@ function stopAll() {
   notify('Todas as capturas foram encerradas.');
 }
 
-// Uma única captura nativa por vez, mesmo durante a troca de fonte.
-function captureFrame(source) {
-  const next = frameRequest.catch(() => {}).then(async () => {
-    const bytes = await invoke('capture_frame', { kind: source.kind, id: source.id });
-    return createImageBitmap(new Blob([bytes], { type: 'image/jpeg' }));
-  });
-  frameRequest = next.then(() => {}, () => {});
-  return next;
+async function captureFrame(sessionId, afterSequence) {
+  const started = performance.now();
+  const bytes = await invoke('capture_frame', { sessionId, afterSequence });
+  metrics.captureTotalMs += performance.now() - started;
+  const decoding = performance.now();
+  const result = await decodeFrame(bytes);
+  metrics.decodeTotalMs += performance.now() - decoding;
+  return result;
 }
 
 async function pollDesktop(version) {
-  if (!desktop || version !== desktopVersion) return;
-  const started = performance.now();
-  try {
-    const frame = await captureFrame(desktop);
-    if (!desktop || version !== desktopVersion) {
-      frame.close();
+  while (desktop && version === desktopVersion) {
+    try {
+      // O backend aguarda novidade; uma única requisição em voo por sessão.
+      const frame = await captureFrame(desktop.sessionId, desktop.sequence);
+      if (!desktop || version !== desktopVersion) {
+        frame?.bitmap.close();
+        return;
+      }
+      if (!frame) continue;
+      desktop.frame.close();
+      desktop.frame = frame.bitmap;
+      desktop.sequence = frame.sequence;
+      metrics.capturedFrames++;
+      const now = performance.now();
+      if (lastCaptureAt) recordInterval(metrics.captureIntervalsMs, now - lastCaptureAt);
+      lastCaptureAt = now;
+      requestPaint();
+    } catch (error) {
+      if (version !== desktopVersion) return;
+      stopDesktop();
+      notify(`A captura foi encerrada. ${String(error)}`, true);
       return;
     }
-    desktop.frame.close();
-    desktop.frame = frame;
-    frames++;
-  } catch (error) {
-    if (version !== desktopVersion) return;
-    stopDesktop();
-    notify(`A captura foi encerrada. ${String(error)}`, true);
-    return;
   }
-  frameTimer = setTimeout(() => pollDesktop(version), Math.max(0, 1000 / 12 - (performance.now() - started)));
 }
 
 async function startDesktop(source, version) {
-  const frame = await captureFrame(source);
-  if (version !== dialogVersion || !$('source-dialog').open) {
-    frame.close();
-    return;
+  const pending = { cancelled: false, sessionId: null };
+  pendingDesktop = pending;
+  try {
+    const sessionId = await sessionOperation(async () => {
+      if (pending.cancelled) return null;
+      const id = await invoke('start_capture', { kind: source.kind, id: source.id });
+      if (pending.cancelled) {
+        await invoke('stop_capture', { sessionId: id });
+        return null;
+      }
+      pending.sessionId = id;
+      return id;
+    });
+    if (!sessionId) return;
+    let frame = null;
+    const deadline = performance.now() + 5000;
+    while (!pending.cancelled && !frame && performance.now() < deadline) {
+      frame = await captureFrame(sessionId, 0);
+    }
+    if (pending.cancelled || version !== dialogVersion || !$('source-dialog').open) {
+      frame?.bitmap.close();
+      return;
+    }
+    if (!frame) throw new Error('A fonte não enviou imagens. Restaure a janela e tente novamente.');
+    pendingDesktop = null;
+    pending.sessionId = null;
+    stopDesktop();
+    desktop = { ...source, sessionId, frame: frame.bitmap, sequence: frame.sequence, presentedSequence: null };
+    metrics.capturedFrames++;
+    frames = 0;
+    updateUI();
+    closeDialog();
+    notify(source.kind === 'screen' ? 'Tela conectada. Se o Mini Studio estiver nela, a prévia também aparecerá na captura.' : 'Janela conectada. Mantenha a janela restaurada para continuar capturando.');
+    pollDesktop(desktopVersion);
+  } finally {
+    if (pendingDesktop === pending) pendingDesktop = null;
+    releaseSession(pending.sessionId);
+    pending.sessionId = null;
   }
-  stopDesktop();
-  desktop = { ...source, frame };
-  frames = 0;
-  updateUI();
-  closeDialog();
-  notify(source.kind === 'screen' ? 'Tela conectada. Se o Mini Studio estiver nela, a prévia também aparecerá na captura.' : 'Janela conectada. Mantenha a janela restaurada para continuar capturando.');
-  pollDesktop(desktopVersion);
+}
+
+function watchCamera(selected) {
+  if (camera !== selected) return;
+  const onFrame = () => {
+    if (camera !== selected) return;
+    cameraRevision++;
+    requestPaint();
+    watchCamera(selected);
+  };
+  cameraCallbackIsVideo = typeof video.requestVideoFrameCallback === 'function';
+  cameraCallback = cameraCallbackIsVideo ? video.requestVideoFrameCallback(onFrame) : requestAnimationFrame(onFrame);
 }
 
 async function startCamera(source, version) {
@@ -201,6 +292,7 @@ async function startCamera(source, version) {
     if (camera === selected) notify('A câmera voltou a enviar imagens.');
   });
   connectingCamera = null;
+  watchCamera(selected);
   updateUI();
   closeDialog();
   notify('Câmera conectada. Use os controles para ajustar a composição.');
@@ -293,6 +385,7 @@ function drawContained(image, width, height, area, mirror = false) {
 }
 
 function paint() {
+  const started = performance.now();
   ctx.fillStyle = '#080b10';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   const full = { x: 0, y: 0, width: canvas.width, height: canvas.height };
@@ -308,18 +401,37 @@ function paint() {
     }
     drawContained(video, video.videoWidth, video.videoHeight, area, $('mirror-camera').checked);
   }
+  metrics.paintTotalMs += performance.now() - started;
+  metrics.compositions++;
+}
+
+function requestPaint() {
+  dirty = true;
+  if (!paintRequest) paintRequest = requestAnimationFrame(render);
 }
 
 function render(time) {
-  if (time - lastPaint >= 1000 / 30) {
-    if (desktop || camera) paint();
-    if (camera && video.currentTime !== lastVideoTime) {
-      cameraFrames++;
-      lastVideoTime = video.currentTime;
-    }
-    lastPaint = time;
+  paintRequest = 0;
+  if (!dirty) return;
+  if (time + 0.8 < nextPaintAt) {
+    paintRequest = requestAnimationFrame(render);
+    return;
   }
-  requestAnimationFrame(render);
+  dirty = false;
+  paint();
+  if (desktop && desktop.presentedSequence !== desktop.sequence) {
+    desktop.presentedSequence = desktop.sequence;
+    frames++;
+    metrics.presentedFrames++;
+    if (lastPresentationAt) recordInterval(metrics.presentationIntervalsMs, time - lastPresentationAt);
+    lastPresentationAt = time;
+  }
+  if (camera && cameraRevision !== paintedCameraRevision) {
+    paintedCameraRevision = cameraRevision;
+    cameraFrames++;
+  }
+  // Mantém a fase de 30 Hz: zerar o relógio a cada rAF causa deriva em monitores de 60 Hz.
+  nextPaintAt += FRAME_INTERVAL * Math.max(1, Math.floor((time - nextPaintAt) / FRAME_INTERVAL) + 1);
 }
 
 async function saveSnapshot() {
@@ -349,19 +461,26 @@ $('source-dialog').addEventListener('cancel', (event) => { event.preventDefault(
 $('refresh-sources').addEventListener('click', loadSources);
 $('stop-all').addEventListener('click', stopAll);
 $('save-snapshot').addEventListener('click', saveSnapshot);
-$('camera-size').addEventListener('input', () => { $('camera-size-value').textContent = `${$('camera-size').value}%`; });
+$('camera-size').addEventListener('input', () => { $('camera-size-value').textContent = `${$('camera-size').value}%`; requestPaint(); });
+$('camera-position').addEventListener('change', requestPaint);
+$('mirror-camera').addEventListener('change', requestPaint);
 window.addEventListener('beforeunload', () => {
   desktopVersion++;
   cameraVersion++;
   dialogVersion++;
-  clearTimeout(frameTimer);
+  cancelPendingDesktop();
+  if (desktop) invoke('stop_capture', { sessionId: desktop.sessionId }).catch(() => {});
   camera?.stream.getTracks().forEach((track) => track.stop());
   desktop?.frame?.close();
 });
+let statsAt = performance.now();
 setInterval(() => {
-  $('fps').textContent = `${desktop ? frames : camera ? cameraFrames : 0} fps`;
+  const now = performance.now();
+  const seconds = (now - statsAt) / 1000;
+  $('fps').textContent = `${Math.round((desktop ? frames : camera ? cameraFrames : 0) / seconds)} fps`;
+  $('fps').title = 'Quadros novos exibidos por segundo. Conteúdo parado pode gerar menos quadros.';
+  statsAt = now;
   frames = 0;
   cameraFrames = 0;
 }, 1000);
 updateUI();
-requestAnimationFrame(render);

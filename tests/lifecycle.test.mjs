@@ -8,7 +8,7 @@ let server, browser, baseURL;
 before(async () => {
   server = createServer(async (req, res) => {
     const name = req.url === '/' ? 'index.html' : req.url.slice(1);
-    if (!['index.html', 'main.js', 'studio.js', 'styles.css'].includes(name)) { res.writeHead(404).end(); return; }
+    if (!['index.html', 'main.js', 'studio.js', 'preview.js', 'styles.css'].includes(name)) { res.writeHead(404).end(); return; }
     res.setHeader('Content-Type', name.endsWith('.js') ? 'text/javascript' : name.endsWith('.css') ? 'text/css' : 'text/html');
     res.end(await readFile(new URL(`../src/${name}`, import.meta.url)));
   });
@@ -28,7 +28,7 @@ async function setup(t) {
   page.on('pageerror', (error) => errors.push(error.message));
   t.after(async () => { await context.close(); assert.deepEqual(errors, []); });
   await page.addInitScript(() => {
-    window.testState = { frames: 0, delay: 0, fail: false, tracks: [], cameraDelay: 0, cameraError: false };
+    window.testState = { frames: 0, delay: 0, fail: false, tracks: [], cameraDelay: 0, cameraError: false, sessions: [], stopped: [], starts: 0 };
     const originalPlay = HTMLMediaElement.prototype.play;
     HTMLMediaElement.prototype.play = function () {
       const result = originalPlay.call(this);
@@ -44,15 +44,36 @@ async function setup(t) {
     };
     window.__TAURI__ = { core: { invoke: async (command, args) => {
       if (command === 'list_capture_sources') return [{ id: 1, name: args.kind === 'screen' ? 'Monitor de teste' : 'Janela de teste', detail: '1280 × 720' }];
+      if (command === 'start_capture') {
+        if (window.testState.startDelay) await new Promise((resolve) => setTimeout(resolve, window.testState.startDelay));
+        const id = `session-${++window.testState.starts}`;
+        window.testState.sessions.push(id);
+        return id;
+      }
+      if (command === 'stop_capture') {
+        window.testState.sessions = window.testState.sessions.filter((id) => id !== args.sessionId);
+        window.testState.stopped.push(args.sessionId);
+        return;
+      }
       if (command === 'capture_frame') {
         window.testState.frames++;
-        if (window.testState.delay) await new Promise((resolve) => setTimeout(resolve, window.testState.delay));
+        await new Promise((resolve) => setTimeout(resolve, window.testState.delay || 33));
+        if (!window.testState.sessions.includes(args.sessionId)) throw new Error('Sessão encerrada.');
         if (window.testState.fail) throw new Error('A janela foi fechada. Selecione outra fonte.');
-        const canvas = document.createElement('canvas');
-        canvas.width = 1280; canvas.height = 720;
-        const ctx = canvas.getContext('2d');
-        ctx.fillStyle = '#ff0000'; ctx.fillRect(0, 0, 1280, 720);
-        return (await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg'))).arrayBuffer();
+        if (window.testState.static && args.afterSequence > 0) {
+          await new Promise((resolve) => setTimeout(resolve, 100));
+          return new ArrayBuffer(0);
+        }
+        const bytes = new ArrayBuffer(12 + 320 * 180 * 4);
+        const header = new DataView(bytes);
+        header.setUint32(0, window.testState.frames, true);
+        header.setUint32(4, 320, true);
+        header.setUint32(8, 180, true);
+        const pixels = new Uint8Array(bytes, 12);
+        for (let offset = 0; offset < pixels.length; offset += 4) {
+          pixels[offset] = 255; pixels[offset + 3] = 255;
+        }
+        return bytes;
       }
       if (command === 'save_snapshot') {
         const image = await createImageBitmap(new Blob([new Uint8Array(args.bytes)]));
@@ -92,6 +113,7 @@ test('tela/janela, composição com câmera, PNG e liberação de recursos', asy
   assert.equal(await page.locator('.source-card').count(), 1);
   assert.equal(await page.locator('#empty-state').isHidden(), true);
   await page.locator('#stop-all').click();
+  await page.waitForFunction(() => !window.testState.sessions.length);
   assert.equal(await page.locator('.source-card').count(), 0);
   assert.equal(await page.locator('#save-snapshot').isDisabled(), true);
   assert.ok(await page.evaluate(() => window.testState.tracks.every((track) => track.readyState === 'ended')));
@@ -105,6 +127,7 @@ test('cancelar seleção descarta quadro pendente e câmera concedida tardiament
   await page.locator('#close-dialog').click();
   await page.waitForTimeout(500);
   assert.equal(await page.locator('.source-card').count(), 0);
+  assert.equal(await page.evaluate(() => window.testState.sessions.length), 0);
   await page.evaluate(() => { window.testState.cameraDelay = 500; });
   await page.locator('#add-camera').click();
   await page.locator('.source-option').first().click();
@@ -139,4 +162,31 @@ test('cancelar câmera durante inicialização do vídeo libera dispositivo imed
   await page.locator('#close-dialog').click();
   assert.ok(await page.evaluate(() => window.testState.tracks.every((track) => track.readyState === 'ended')));
   assert.equal(await page.locator('.source-card').count(), 0);
+});
+
+test('cancelar criação nativa tardia não deixa sessão ativa', async (t) => {
+  const page = await setup(t);
+  await page.evaluate(() => { window.testState.startDelay = 250; });
+  await page.locator('#add-window').click();
+  await page.locator('.source-option').click();
+  await page.locator('#close-dialog').click();
+  await page.waitForFunction(() => window.testState.stopped.length === 1);
+  assert.equal(await page.evaluate(() => window.testState.sessions.length), 0);
+  assert.equal(await page.locator('.source-card').count(), 0);
+});
+
+test('prévia não redesenha conteúdo estático e libera captura ao parar', async (t) => {
+  const page = await setup(t);
+  await page.evaluate(() => { window.testState.static = true; });
+  await select(page, 'screen');
+  await page.waitForFunction(() => window.__miniStudioMetrics.presentedFrames === 1);
+  const before = await page.evaluate(() => window.__miniStudioMetrics.compositions);
+  await page.waitForTimeout(350);
+  assert.equal(await page.evaluate(() => window.__miniStudioMetrics.compositions), before);
+  await page.locator('#stop-all').click();
+  await page.waitForFunction(() => !window.testState.sessions.length);
+  await page.waitForTimeout(200);
+  const requests = await page.evaluate(() => window.testState.frames);
+  await page.waitForTimeout(150);
+  assert.equal(await page.evaluate(() => window.testState.frames), requests);
 });

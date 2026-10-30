@@ -7,7 +7,7 @@
     "build": "cargo tauri build --no-bundle",
     "build:debug": "cargo build --manifest-path src-tauri/Cargo.toml",
     "check": "npm run check:js && npm run check:rust",
-    "check:js": "node --check src/main.js && node --check src/studio.js",
+    "check:js": "node --check src/main.js && node --check src/studio.js && node --check src/preview.js",
     "check:rust": "cargo check --manifest-path src-tauri/Cargo.toml",
     "test": "npm run test:ui && npm run test:rust",
     "test:ui": "node --test tests/*.test.mjs",
