@@ -52,28 +52,66 @@ pub struct Pixels {
     pub rgba: Arc<[u8]>,
 }
 
-#[derive(Clone)]
-pub struct Scene {
-    pub desktop: Option<Pixels>,
-    pub camera: Option<Pixels>,
-    pub image: Option<Pixels>,
-    pub image_settings: ImageSettings,
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Transform {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
     pub mirror: bool,
-    pub camera_size: u32,
-    pub camera_position: CameraPosition,
+    pub opacity: u8,
+}
+impl Default for Transform {
+    fn default() -> Self {
+        Self {
+            x: 0.0,
+            y: 0.0,
+            width: 1.0,
+            height: 1.0,
+            mirror: false,
+            opacity: 255,
+        }
+    }
+}
+impl Transform {
+    pub fn sanitize(&mut self) {
+        self.x = self.x.clamp(0.0, 1.0);
+        self.y = self.y.clamp(0.0, 1.0);
+        self.width = self.width.clamp(0.01, 1.0);
+        self.height = self.height.clamp(0.01, 1.0);
+    }
+    pub fn from_rect(rect: [f32; 4]) -> Self {
+        Self {
+            x: rect[0] / WIDTH as f32,
+            y: rect[1] / HEIGHT as f32,
+            width: rect[2] / WIDTH as f32,
+            height: rect[3] / HEIGHT as f32,
+            ..Default::default()
+        }
+    }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Source {
-    Desktop,
-    Image,
-    Camera,
+pub type Source = u64;
+
+#[derive(Clone)]
+pub struct SceneSource {
+    pub id: Source,
+    pub pixels: Pixels,
+    pub transform: Transform,
+}
+
+#[derive(Clone, Default)]
+pub struct Scene {
+    // A primeira fonte é a camada de trás; a lista da interface mostra a ordem inversa.
+    pub sources: Vec<SceneSource>,
 }
 
 pub struct Layer {
     pub source: Option<Source>,
     pub rect: [f32; 4],
     pub mirror: bool,
+    pub opacity: u8,
     pub color: Rgba<u8>,
 }
 
@@ -116,103 +154,46 @@ pub fn camera_rect(percent: u32, position: CameraPosition, area: [f32; 4]) -> [f
 
 impl Scene {
     pub fn same_content(&self, other: &Self) -> bool {
-        fn same(a: &Option<Pixels>, b: &Option<Pixels>) -> bool {
-            match (a, b) {
-                (Some(a), Some(b)) => {
-                    a.width == b.width && a.height == b.height && Arc::ptr_eq(&a.rgba, &b.rgba)
-                }
-                (None, None) => true,
-                _ => false,
-            }
-        }
-        same(&self.desktop, &other.desktop)
-            && same(&self.camera, &other.camera)
-            && same(&self.image, &other.image)
-            && self.image_settings == other.image_settings
-            && self.mirror == other.mirror
-            && self.camera_size == other.camera_size
-            && self.camera_position == other.camera_position
+        self.sources.len() == other.sources.len()
+            && self.sources.iter().zip(&other.sources).all(|(a, b)| {
+                a.id == b.id
+                    && a.transform == b.transform
+                    && a.pixels.width == b.pixels.width
+                    && a.pixels.height == b.pixels.height
+                    && Arc::ptr_eq(&a.pixels.rgba, &b.pixels.rgba)
+            })
     }
     pub fn pixels(&self, source: Source) -> Option<&Pixels> {
-        match source {
-            Source::Desktop => self.desktop.as_ref(),
-            Source::Camera => self.camera.as_ref(),
-            Source::Image => self.image.as_ref(),
-        }
+        self.sources
+            .iter()
+            .find(|item| item.id == source)
+            .map(|item| &item.pixels)
     }
-
-    // Coordenadas da saída são quantizadas uma vez, antes de escalar a prévia.
     pub fn layers(&self) -> Vec<Layer> {
-        let full = [0.0, 0.0, WIDTH as f32, HEIGHT as f32];
         let mut layers = vec![Layer {
             source: None,
-            rect: full,
+            rect: [0.0, 0.0, WIDTH as f32, HEIGHT as f32],
             mirror: false,
+            opacity: 255,
             color: BACKGROUND,
         }];
-        let visible_image = self.image.as_ref().filter(|_| self.image_settings.visible);
-        let image_layer = || {
-            visible_image.map(|pixels| {
-                let s = self.image_settings;
-                let scale = s.size.clamp(5, 100) as f32 / 100.0;
-                let [_, _, w, h] = fit_rect(
-                    pixels.width,
-                    pixels.height,
-                    [0.0, 0.0, full[2] * scale, full[3] * scale],
-                );
-                Layer {
-                    source: Some(Source::Image),
-                    rect: [
-                        (full[2] - w) * s.x.clamp(0.0, 1.0),
-                        (full[3] - h) * s.y.clamp(0.0, 1.0),
-                        w,
-                        h,
-                    ]
-                    .map(f32::round),
-                    mirror: false,
-                    color: Rgba([255; 4]),
-                }
-            })
-        };
-        if self.image_settings.mode == ImageMode::Background {
-            layers.extend(image_layer());
-        }
-        if let Some(p) = &self.desktop {
+        for source in &self.sources {
+            let t = source.transform;
             layers.push(Layer {
-                source: Some(Source::Desktop),
-                rect: fit_rect(p.width, p.height, full).map(f32::round),
-                mirror: false,
-                color: Rgba([255; 4]),
-            });
-        }
-        if self.image_settings.mode == ImageMode::Overlay {
-            layers.extend(image_layer());
-        }
-        if let Some(p) = &self.camera {
-            let pip = self.desktop.is_some() || visible_image.is_some();
-            let area = if pip {
-                camera_rect(self.camera_size, self.camera_position, full).map(f32::round)
-            } else {
-                full
-            };
-            if pip {
-                layers.push(Layer {
-                    source: None,
-                    rect: [area[0] - 2.0, area[1] - 2.0, area[2] + 4.0, area[3] + 4.0],
-                    mirror: false,
-                    color: Rgba([255; 4]),
-                });
-                layers.push(Layer {
-                    source: None,
-                    rect: area,
-                    mirror: false,
-                    color: BACKGROUND,
-                });
-            }
-            layers.push(Layer {
-                source: Some(Source::Camera),
-                rect: fit_rect(p.width, p.height, area).map(f32::round),
-                mirror: self.mirror,
+                source: Some(source.id),
+                rect: fit_rect(
+                    source.pixels.width,
+                    source.pixels.height,
+                    [
+                        t.x * WIDTH as f32,
+                        t.y * HEIGHT as f32,
+                        t.width * WIDTH as f32,
+                        t.height * HEIGHT as f32,
+                    ],
+                )
+                .map(f32::round),
+                mirror: t.mirror,
+                opacity: t.opacity,
                 color: Rgba([255; 4]),
             });
         }
@@ -258,7 +239,7 @@ impl Scene {
                         continue;
                     }
                     let dst = canvas.get_pixel_mut(x + sx, y + sy);
-                    let alpha = u32::from(pixel[3]);
+                    let alpha = (u32::from(pixel[3]) * u32::from(layer.opacity) + 127) / 255;
                     for channel in 0..3 {
                         dst[channel] = ((u32::from(pixel[channel]) * alpha
                             + u32::from(dst[channel]) * (255 - alpha)
@@ -282,74 +263,73 @@ impl Scene {
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn solid(color: [u8; 4]) -> Pixels {
-        Pixels {
-            width: 1,
-            height: 1,
-            rgba: Arc::from(color),
-        }
-    }
-    fn empty() -> Scene {
-        Scene {
-            desktop: None,
-            camera: None,
-            image: None,
-            image_settings: ImageSettings::default(),
-            mirror: false,
-            camera_size: 25,
-            camera_position: CameraPosition::BottomRight,
+    fn solid(id: u64, color: [u8; 4]) -> SceneSource {
+        SceneSource {
+            id,
+            pixels: Pixels {
+                width: 16,
+                height: 9,
+                rgba: color.repeat(144).into(),
+            },
+            transform: Transform::default(),
         }
     }
     #[test]
-    fn empty_output_is_opaque_background() {
-        let result = empty().compose().unwrap();
-        assert_eq!(result.dimensions(), (WIDTH, HEIGHT));
-        assert!(result.pixels().all(|p| *p == BACKGROUND));
-    }
-    #[test]
-    fn image_order_visibility_and_alpha() {
-        let mut scene = empty();
-        scene.desktop = Some(solid([0, 0, 255, 255]));
-        scene.image = Some(solid([255, 0, 0, 128]));
+    fn repeated_source_types_follow_order_alpha_and_opacity() {
+        let mut scene = Scene {
+            sources: vec![
+                solid(1, [255, 0, 0, 255]),
+                solid(2, [0, 255, 0, 128]),
+                solid(3, [0, 0, 255, 255]),
+            ],
+        };
+        scene.sources[2].transform.opacity = 128;
+        let image = scene.compose().unwrap();
+        assert_eq!(image.get_pixel(640, 360).0, [63, 64, 128, 255]);
+        let before = scene.clone();
+        scene.sources.swap(0, 2);
+        assert!(!scene.same_content(&before));
         assert_eq!(
             scene.compose().unwrap().get_pixel(640, 360).0,
-            [0, 0, 255, 255]
+            [255, 0, 0, 255]
         );
-        scene.image_settings.mode = ImageMode::Overlay;
-        let p = scene.compose().unwrap().get_pixel(640, 360).0;
+        scene.sources.clear();
+        assert_eq!(scene.compose().unwrap().get_pixel(640, 360), &BACKGROUND);
+    }
+    #[test]
+    fn preview_geometry_matches_export_and_mirrors_each_source() {
+        let mut source = SceneSource {
+            id: 7,
+            pixels: Pixels {
+                width: 2,
+                height: 1,
+                rgba: vec![255, 0, 0, 255, 0, 0, 255, 255].into(),
+            },
+            transform: Transform {
+                x: 0.5,
+                y: 0.5,
+                width: 0.5,
+                height: 0.5,
+                mirror: true,
+                ..Default::default()
+            },
+        };
+        let scene = Scene {
+            sources: vec![source.clone()],
+        };
+        let layer = scene.layers().pop().unwrap();
+        assert_eq!(layer.rect, [640.0, 380.0, 640.0, 320.0]);
+        let image = scene.compose().unwrap();
+        assert_eq!(image.get_pixel(650, 400).0, [0, 0, 255, 255]);
+        assert_eq!(image.get_pixel(1270, 400).0, [255, 0, 0, 255]);
+        assert_eq!(image.get_pixel(10, 10), &BACKGROUND);
+        source.pixels.rgba = vec![0; 3].into();
         assert!(
-            (127..=128).contains(&p[0]) && (126..=128).contains(&p[2]) && p[3] == 255,
-            "pixel: {p:?}"
+            Scene {
+                sources: vec![source]
+            }
+            .compose()
+            .is_err()
         );
-        scene.image_settings.visible = false;
-        assert_eq!(
-            scene.compose().unwrap().get_pixel(640, 360).0,
-            [0, 0, 255, 255]
-        );
-    }
-    #[test]
-    fn camera_mirror_and_image_position_share_layout() {
-        let mut scene = empty();
-        scene.camera = Some(Pixels {
-            width: 2,
-            height: 1,
-            rgba: Arc::from([255, 0, 0, 255, 0, 0, 255, 255]),
-        });
-        scene.mirror = true;
-        assert_eq!(
-            scene.compose().unwrap().get_pixel(100, 360).0,
-            [0, 0, 255, 255]
-        );
-        scene.image = Some(solid([255; 4]));
-        scene.image_settings.size = 25;
-        scene.image_settings.x = 1.0;
-        scene.image_settings.y = 0.0;
-        let layers = scene.layers();
-        let image = layers
-            .iter()
-            .find(|l| l.source == Some(Source::Image))
-            .unwrap();
-        assert_eq!(image.rect, [1100.0, 0.0, 180.0, 180.0]);
-        assert_eq!(layers.last().unwrap().source, Some(Source::Camera));
     }
 }

@@ -44,5 +44,8 @@
     }
   ],
   "typescript.tsdk": "node_modules\\typescript\\lib",
-  "cmake.ignoreCMakeListsMissing": true
+  "cmake.ignoreCMakeListsMissing": true,
+  "[rust]": {
+    "editor.defaultFormatter": "rust-lang.rust-analyzer"
+  }
 }

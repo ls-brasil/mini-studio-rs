@@ -11,6 +11,7 @@ const MAX_PIXELS: u64 = 16_000_000;
 const MAX_SIDE: u32 = 8192;
 
 pub struct LoadedImage {
+    pub path: std::path::PathBuf,
     pub name: String,
     pub pixels: Pixels,
 }
@@ -31,6 +32,7 @@ pub fn load(path: &Path) -> Result<LoadedImage, String> {
     }
     let pixels = decode(&bytes)?;
     Ok(LoadedImage {
+        path: path.canonicalize().map_err(|e| e.to_string())?,
         name: path
             .file_name()
             .unwrap_or_default()

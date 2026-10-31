@@ -291,7 +291,7 @@ mod tests {
     fn installed_virtual_camera_ffmpeg() {
         use crate::{
             camera,
-            composition::{CameraPosition, ImageSettings, Pixels},
+            composition::{Pixels, SceneSource, Transform},
         };
         use std::{
             os::windows::process::CommandExt,
@@ -299,17 +299,15 @@ mod tests {
         };
         assert!(installed());
         let scene = Scene {
-            desktop: None,
-            camera: None,
-            image: Some(Pixels {
-                width: 2,
-                height: 2,
-                rgba: [50, 200, 100, 255].repeat(4).into(),
-            }),
-            image_settings: ImageSettings::default(),
-            mirror: false,
-            camera_size: 25,
-            camera_position: CameraPosition::BottomRight,
+            sources: vec![SceneSource {
+                id: 1,
+                pixels: Pixels {
+                    width: 2,
+                    height: 2,
+                    rgba: [50, 200, 100, 255].repeat(4).into(),
+                },
+                transform: Transform::default(),
+            }],
         };
         let output = VirtualCamera::start(scene, egui::Context::default()).unwrap();
         let deadline = Instant::now() + Duration::from_secs(15);
@@ -377,24 +375,22 @@ mod tests {
     fn installed_virtual_camera_round_trip() {
         use crate::{
             camera,
-            composition::{CameraPosition, ImageSettings, Pixels},
+            composition::{Pixels, SceneSource, Transform},
         };
         assert!(
             installed(),
             "Instale o componente antes do teste de integração."
         );
         let make_scene = |color: [u8; 4]| Scene {
-            desktop: None,
-            camera: None,
-            image: Some(Pixels {
-                width: 2,
-                height: 2,
-                rgba: color.repeat(4).into(),
-            }),
-            image_settings: ImageSettings::default(),
-            mirror: false,
-            camera_size: 25,
-            camera_position: CameraPosition::BottomRight,
+            sources: vec![SceneSource {
+                id: 1,
+                pixels: Pixels {
+                    width: 2,
+                    height: 2,
+                    rgba: color.repeat(4).into(),
+                },
+                transform: Transform::default(),
+            }],
         };
         let context = egui::Context::default();
         let output =

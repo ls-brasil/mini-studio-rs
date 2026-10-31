@@ -5,21 +5,25 @@ mod composition;
 mod image_source;
 mod native_capture;
 mod preferences;
+mod scene_ui;
+mod scenes;
+mod source_runtime;
 mod studio_ui;
 mod theme;
 mod virtual_camera;
 
-use camera::{CameraCapture, CameraDevice, CameraFrame};
-use composition::{CameraPosition, ImageSettings, Pixels, Scene, Source};
+use camera::CameraDevice;
+use composition::{Scene, SceneSource, Source, Transform};
 use eframe::egui::{self, TextureHandle, TextureOptions};
-use native_capture::{CaptureSession, CaptureSource, NativeFrame, SourceKind};
+use native_capture::{CaptureSource, SourceKind};
+use scenes::{SavedScene, SavedSource, SourceInput};
+use source_runtime::RuntimeSource;
 use std::{
+    cell::RefCell,
+    collections::{HashMap, HashSet},
     path::PathBuf,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-        mpsc::{self, Receiver},
-    },
+    rc::Rc,
+    sync::mpsc::{self, Receiver},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -29,7 +33,7 @@ struct Options {
     seconds: f64,
     report: Option<PathBuf>,
     screenshot: Option<PathBuf>,
-    image: Option<PathBuf>,
+    image: Vec<PathBuf>,
     ui_size: Option<[f32; 2]>,
     ui_exit: bool,
     ui_dialog: Option<String>,
@@ -65,13 +69,15 @@ impl Options {
                         Some(args.next().ok_or("Informe o caminho do relatório.")?.into())
                 }
                 "--image" => {
-                    options.image = Some(args.next().ok_or("Informe o caminho da imagem.")?.into());
+                    options
+                        .image
+                        .push(args.next().ok_or("Informe o caminho da imagem.")?.into());
                 }
                 "--ui-exit" => options.ui_exit = true,
                 "--ui-dialog" => {
-                    let dialog = args.next().ok_or("Informe help ou setup.")?;
-                    if !matches!(dialog.as_str(), "help" | "setup") {
-                        return Err("Diálogo inválido: use help ou setup.".into());
+                    let dialog = args.next().ok_or("Informe help, setup ou scene.")?;
+                    if !matches!(dialog.as_str(), "help" | "setup" | "scene") {
+                        return Err("Diálogo inválido: use help, setup ou scene.".into());
                     }
                     options.ui_dialog = Some(dialog);
                 }
@@ -142,71 +148,33 @@ struct Picker {
     search: String,
 }
 
-struct DesktopReady {
-    source: CaptureSource,
-    kind: SourceKind,
-    session: CaptureSession,
-    frame: NativeFrame,
-}
-struct PendingDesktop {
-    receiver: Receiver<Result<DesktopReady, String>>,
-    cancelled: Arc<AtomicBool>,
-}
-impl Drop for PendingDesktop {
-    fn drop(&mut self) {
-        self.cancelled.store(true, Ordering::Release);
-    }
-}
-struct Desktop {
-    source: CaptureSource,
-    kind: SourceKind,
-    session: CaptureSession,
-    frame: NativeFrame,
-    texture: TextureHandle,
-}
-struct Camera {
-    device: CameraDevice,
-    capture: CameraCapture,
-    frame: CameraFrame,
-    texture: TextureHandle,
-}
-
-struct ImageSource {
-    loaded: image_source::LoadedImage,
-    texture: TextureHandle,
-}
-
 struct Studio {
+    scenes: scenes::SceneLibrary,
+    saved_scenes: scenes::SceneLibrary,
+    scenes_load_error: Option<String>,
+    scene_dialog: Option<scene_ui::SceneDialog>,
+    runtimes: HashMap<Source, Rc<RefCell<RuntimeSource>>>,
+    next_source_id: u64,
     selected: Option<Source>,
-    inspector_tab: bool,
-    desktop_visible: bool,
-    camera_visible: bool,
+    properties: Option<Source>,
+    picker_target: Option<Source>,
+    image_target: Option<Source>,
     guides: bool,
     scale: f32,
     help_open: bool,
     setup_open: bool,
     notice_error: bool,
-    notice_seen: String,
+    notice: String,
     notice_at: Instant,
+    notice_seen: String,
     saved_path: Option<PathBuf>,
     preferences_at: Instant,
     saved_preferences: preferences::Preferences,
-    canvas_drag: Option<(Source, f32, f32)>,
-    pending_camera_at: Option<Instant>,
-    image: Option<ImageSource>,
-    image_settings: ImageSettings,
+    canvas_drag: Option<(Source, Transform, bool)>,
     image_receiver: Option<Receiver<Result<Option<image_source::LoadedImage>, String>>>,
     virtual_camera: Option<virtual_camera::VirtualCamera>,
     virtual_notice: String,
-    desktop: Option<Desktop>,
-    camera: Option<Camera>,
-    pending_desktop: Option<PendingDesktop>,
-    pending_camera: Option<(CameraDevice, CameraCapture)>,
     picker: Option<Picker>,
-    notice: String,
-    mirror: bool,
-    camera_size: u32,
-    camera_position: CameraPosition,
     save_receiver: Option<Receiver<Result<Option<String>, String>>>,
     fps_at: Instant,
     fps_frames: u64,
@@ -247,7 +215,6 @@ impl Studio {
             .unwrap_or_else(|| "GPU".into());
         Self::initialize(&cc.egui_ctx, adapter, options)
     }
-
     fn initialize(ctx: &egui::Context, adapter: String, options: Options) -> Self {
         theme::configure(ctx);
         let prefs = if options.screenshot.is_some() || options.benchmark.is_some() {
@@ -257,36 +224,32 @@ impl Studio {
         };
         ctx.set_zoom_factor(prefs.scale);
         let mut app = Self {
+            scenes: scenes::SceneLibrary::default(),
+            saved_scenes: scenes::SceneLibrary::default(),
+            scenes_load_error: None,
+            scene_dialog: None,
+            runtimes: HashMap::new(),
+            next_source_id: 1,
             selected: None,
-            inspector_tab: false,
-            desktop_visible: true,
-            camera_visible: true,
+            properties: None,
+            picker_target: None,
+            image_target: None,
             guides: prefs.guides,
             scale: prefs.scale,
             help_open: options.ui_dialog.as_deref() == Some("help"),
             setup_open: options.ui_dialog.as_deref() == Some("setup"),
             notice_error: false,
-            notice_seen: String::new(),
+            notice: String::new(),
             notice_at: Instant::now(),
+            notice_seen: String::new(),
             saved_path: None,
             preferences_at: Instant::now(),
-            saved_preferences: prefs.clone(),
+            saved_preferences: prefs,
             canvas_drag: None,
-            pending_camera_at: None,
-            image: None,
-            image_settings: prefs.image,
             image_receiver: None,
             virtual_camera: None,
             virtual_notice: "Câmera virtual parada.".into(),
-            desktop: None,
-            camera: None,
-            pending_desktop: None,
-            pending_camera: None,
             picker: None,
-            notice: String::new(),
-            mirror: prefs.mirror,
-            camera_size: prefs.camera_size,
-            camera_position: prefs.camera_position,
             save_receiver: None,
             fps_at: Instant::now(),
             fps_frames: 0,
@@ -298,62 +261,123 @@ impl Studio {
             first_frame: None,
             benchmark_start: None,
             benchmark_frames: 0,
-            frame_intervals: Vec::new(),
+            frame_intervals: vec![],
             last_frame_at: None,
             screenshot_requested: false,
             adapter,
         };
+        app.initialize_scenes();
+        if app.options.ui_dialog.as_deref() == Some("scene") {
+            app.scene_dialog = Some(scene_ui::SceneDialog::Create {
+                name: "Nova cena".into(),
+            });
+        }
         if let Some((kind, title)) = &app.options.benchmark {
             let result = native_capture::list_sources(*kind).and_then(|sources| {
                 sources
                     .into_iter()
-                    .find(|source| source.name.contains(title))
+                    .find(|s| s.name.contains(title))
                     .ok_or_else(|| "Fonte de benchmark não encontrada.".into())
             });
             match result {
                 Ok(source) => app.start_desktop(ctx, *kind, source),
-                Err(error) => app.notice = error,
+                Err(error) => app.show_error(error),
             }
         }
-        if let Some(path) = app.options.image.clone() {
-            app.load_image(ctx, Some(path));
+        for path in app.options.image.clone() {
+            app.add_input(ctx, SourceInput::Image(path));
         }
         app
     }
-
+    fn allocate_source_id(&mut self) -> Source {
+        let id = self.next_source_id;
+        self.next_source_id += 1;
+        id
+    }
+    fn current_scene(&self) -> &SavedScene {
+        &self.scenes.scenes[self.scenes.active]
+    }
+    fn current_scene_mut(&mut self) -> &mut SavedScene {
+        &mut self.scenes.scenes[self.scenes.active]
+    }
+    fn source(&self, id: Source) -> Option<&SavedSource> {
+        self.current_scene().sources.iter().find(|s| s.id == id)
+    }
+    fn source_mut(&mut self, id: Source) -> Option<&mut SavedSource> {
+        self.current_scene_mut()
+            .sources
+            .iter_mut()
+            .find(|s| s.id == id)
+    }
     fn scene(&self) -> Scene {
         Scene {
-            desktop: self
-                .desktop
-                .as_ref()
-                .filter(|_| self.desktop_visible)
-                .map(|s| Pixels {
-                    width: s.frame.width,
-                    height: s.frame.height,
-                    rgba: s.frame.rgba.clone(),
-                }),
-            camera: self
-                .camera
-                .as_ref()
-                .filter(|_| self.camera_visible)
-                .map(|s| Pixels {
-                    width: s.frame.width,
-                    height: s.frame.height,
-                    rgba: s.frame.rgba.clone(),
-                }),
-            image: self.image.as_ref().map(|s| s.loaded.pixels.clone()),
-            image_settings: self.image_settings,
-            mirror: self.mirror,
-            camera_size: self.camera_size,
-            camera_position: self.camera_position,
+            sources: self
+                .current_scene()
+                .sources
+                .iter()
+                .filter(|s| s.visible)
+                .filter_map(|source| {
+                    let runtime = self.runtimes.get(&source.id)?.borrow();
+                    Some(SceneSource {
+                        id: source.id,
+                        pixels: runtime.pixels.clone()?,
+                        transform: source.transform,
+                    })
+                })
+                .collect(),
         }
     }
-
-    fn open_image(&mut self, ctx: &egui::Context) {
-        self.load_image(ctx, None);
+    fn activate_source(&mut self, ctx: &egui::Context, id: Source) {
+        let Some(source) = self.source(id) else {
+            return;
+        };
+        let input = source.input.clone();
+        let shared = self
+            .current_scene()
+            .sources
+            .iter()
+            .filter(|s| s.id != id && s.input == input)
+            .find_map(|s| {
+                self.runtimes
+                    .get(&s.id)
+                    .filter(|r| r.borrow().error.is_none())
+                    .cloned()
+            });
+        let runtime =
+            shared.unwrap_or_else(|| Rc::new(RefCell::new(RuntimeSource::loading(ctx, input))));
+        self.runtimes.insert(id, runtime);
     }
-
-    fn load_image(&mut self, ctx: &egui::Context, path: Option<PathBuf>) {
+    fn add_input(&mut self, ctx: &egui::Context, input: SourceInput) -> Source {
+        let id = self.allocate_source_id();
+        let name = input.name();
+        self.current_scene_mut().sources.push(SavedSource {
+            id,
+            name,
+            input,
+            visible: true,
+            locked: false,
+            transform: Transform::default(),
+        });
+        self.selected = Some(id);
+        self.activate_source(ctx, id);
+        id
+    }
+    fn accept_input(&mut self, ctx: &egui::Context, input: SourceInput) {
+        if let Some(id) = self.picker_target.take() {
+            if let Some(source) = self.source_mut(id) {
+                source.input = input;
+                self.runtimes.remove(&id);
+                self.activate_source(ctx, id);
+            }
+        } else {
+            self.add_input(ctx, input);
+        }
+        self.picker = None;
+    }
+    fn open_image(&mut self, ctx: &egui::Context) {
+        self.load_image(ctx, None, None);
+    }
+    fn load_image(&mut self, ctx: &egui::Context, path: Option<PathBuf>, target: Option<Source>) {
         let (sender, receiver) = mpsc::channel();
         let context = ctx.clone();
         std::thread::spawn(move || {
@@ -370,10 +394,41 @@ impl Studio {
             context.request_repaint();
         });
         self.image_receiver = Some(receiver);
+        self.image_target = target;
     }
-
-    fn open_picker(&mut self, ctx: &egui::Context, kind: PickerKind) {
-        self.cancel_pending();
+    fn accept_image(
+        &mut self,
+        ctx: &egui::Context,
+        loaded: image_source::LoadedImage,
+        target: Option<Source>,
+    ) {
+        let id = if let Some(id) = target {
+            let Some(source) = self.source_mut(id) else {
+                return;
+            };
+            source.input = SourceInput::Image(loaded.path);
+            id
+        } else {
+            let id = self.allocate_source_id();
+            self.current_scene_mut().sources.push(SavedSource {
+                id,
+                name: loaded.name,
+                input: SourceInput::Image(loaded.path),
+                visible: true,
+                locked: false,
+                transform: Transform::default(),
+            });
+            id
+        };
+        self.runtimes.insert(
+            id,
+            Rc::new(RefCell::new(RuntimeSource::image(ctx, loaded.pixels))),
+        );
+        self.selected = Some(id);
+        self.notice_error = false;
+        self.notice = "Imagem adicionada à cena.".into();
+    }
+    fn open_picker(&mut self, ctx: &egui::Context, kind: PickerKind, target: Option<Source>) {
         let (sender, receiver) = mpsc::channel();
         let context = ctx.clone();
         std::thread::spawn(move || {
@@ -381,15 +436,15 @@ impl Studio {
                 PickerKind::Camera => camera::list_cameras()
                     .map(|devices| devices.into_iter().map(Choice::Camera).collect()),
                 _ => {
-                    let native_kind = if matches!(kind, PickerKind::Screen) {
+                    let kind = if matches!(kind, PickerKind::Screen) {
                         SourceKind::Screen
                     } else {
                         SourceKind::Window
                     };
-                    native_capture::list_sources(native_kind).map(|sources| {
+                    native_capture::list_sources(kind).map(|sources| {
                         sources
                             .into_iter()
-                            .map(|source| Choice::Desktop(native_kind, source))
+                            .map(|s| Choice::Desktop(kind, s))
                             .collect()
                     })
                 }
@@ -397,81 +452,39 @@ impl Studio {
             let _ = sender.send(result);
             context.request_repaint();
         });
+        self.picker_target = target;
         self.picker = Some(Picker {
             kind,
             receiver: Some(receiver),
-            choices: Vec::new(),
+            choices: vec![],
             message: "Procurando fontes…".into(),
             search: String::new(),
         });
     }
-
-    fn cancel_pending(&mut self) {
-        self.pending_desktop = None;
-        self.pending_camera = None;
-        self.pending_camera_at = None;
-    }
-
     fn start_desktop(&mut self, ctx: &egui::Context, kind: SourceKind, source: CaptureSource) {
-        self.cancel_pending();
-        let (sender, receiver) = mpsc::channel();
-        let cancelled = Arc::new(AtomicBool::new(false));
-        let cancellation = cancelled.clone();
-        let context = ctx.clone();
-        std::thread::spawn(move || {
-            let result = (|| {
-                let session = CaptureSession::start(kind, source.id)?;
-                let deadline = Instant::now() + Duration::from_secs(5);
-                while !cancellation.load(Ordering::Acquire) && Instant::now() < deadline {
-                    if let Some(frame) = session.read(0)? {
-                        let wake = context.clone();
-                        session.set_waker(Arc::new(move || wake.request_repaint()));
-                        return Ok(DesktopReady {
-                            source,
-                            kind,
-                            session,
-                            frame,
-                        });
-                    }
-                }
-                Err("A fonte não enviou imagens ou a seleção foi cancelada.".to_string())
-            })();
-            let _ = sender.send(result);
-            context.request_repaint();
-        });
-        self.pending_desktop = Some(PendingDesktop {
-            receiver,
-            cancelled,
-        });
-        if let Some(picker) = &mut self.picker {
-            picker.message = "Conectando à fonte…".into();
-        }
+        self.accept_input(
+            ctx,
+            SourceInput::Desktop(scenes::DesktopSource {
+                window: kind == SourceKind::Window,
+                name: source.name,
+                detail: source.detail,
+            }),
+        );
     }
-
     fn start_camera(&mut self, ctx: &egui::Context, device: CameraDevice) {
-        self.cancel_pending();
-        match CameraCapture::start(device.id.clone()) {
-            Ok(capture) => {
-                let wake = ctx.clone();
-                capture.set_waker(Arc::new(move || wake.request_repaint()));
-                self.pending_camera = Some((device, capture));
-                self.pending_camera_at = Some(Instant::now());
-                if let Some(picker) = &mut self.picker {
-                    picker.message = "Abrindo câmera…".into();
-                }
-            }
-            Err(error) => self.show_error(error),
-        }
+        self.accept_input(
+            ctx,
+            SourceInput::Camera(scenes::CameraSource {
+                id: device.id,
+                name: device.name,
+            }),
+        );
     }
-
     fn show_error(&mut self, error: String) {
         self.notice_error = true;
-        self.notice = error.clone();
-        if let Some(picker) = &mut self.picker {
-            picker.message = error;
-        }
+        self.notice = error;
+        self.notice_at = Instant::now();
     }
-
     fn count_frame(&mut self) {
         let now = Instant::now();
         self.fps_frames += 1;
@@ -489,40 +502,17 @@ impl Studio {
     }
 
     fn receive_frames(&mut self, ctx: &egui::Context) {
-        if let Some(receiver) = &self.image_receiver
-            && let Ok(result) = receiver.try_recv()
-        {
+        if let Some(result) = self.image_receiver.as_ref().and_then(|r| r.try_recv().ok()) {
             self.image_receiver = None;
-            self.notice_at = Instant::now();
+            let target = self.image_target.take();
             match result {
-                Ok(Some(loaded)) => {
-                    let p = &loaded.pixels;
-                    let texture = load_texture(ctx, "image", p.width, p.height, &p.rgba);
-                    self.image = Some(ImageSource { loaded, texture });
-                    self.image_settings.visible = true;
-                    self.selected = Some(Source::Image);
-                    self.inspector_tab = true;
-                    self.notice_error = false;
-                    self.notice = "Imagem carregada.".into();
-                }
-                Ok(None) => {
-                    self.notice_error = false;
-                    self.notice = "Seleção de imagem cancelada.".into();
-                }
-                Err(error) => self.show_error(error),
+                Ok(Some(loaded)) => self.accept_image(ctx, loaded, target),
+                Ok(None) => {}
+                Err(e) => self.show_error(e),
             }
         }
-        if let Some(output) = &self.virtual_camera {
-            self.virtual_notice = output.status();
-            if output.finished() {
-                self.virtual_camera = None;
-            }
-            ctx.request_repaint_after(Duration::from_millis(100));
-        }
-
         if let Some(picker) = &mut self.picker
-            && let Some(receiver) = &picker.receiver
-            && let Ok(result) = receiver.try_recv()
+            && let Some(result) = picker.receiver.as_ref().and_then(|r| r.try_recv().ok())
         {
             picker.receiver = None;
             match result {
@@ -535,148 +525,48 @@ impl Studio {
                     }
                     .into();
                 }
-                Err(error) => picker.message = error,
+                Err(e) => picker.message = e,
             }
         }
-        if let Some(pending) = &self.pending_desktop
-            && let Ok(result) = pending.receiver.try_recv()
-        {
-            self.pending_desktop = None;
-            match result {
-                Ok(ready) => {
-                    let texture = load_texture(
-                        ctx,
-                        "desktop",
-                        ready.frame.width,
-                        ready.frame.height,
-                        &ready.frame.rgba,
-                    );
-                    self.desktop = Some(Desktop {
-                        source: ready.source,
-                        kind: ready.kind,
-                        session: ready.session,
-                        frame: ready.frame,
-                        texture,
-                    });
-                    self.picker = None;
-                    self.selected = Some(Source::Desktop);
-                    self.inspector_tab = true;
-                    self.desktop_visible = true;
-                    self.notice_error = false;
-                    self.notice = "Captura adicionada à composição.".into();
-                    self.count_frame();
-                }
-                Err(error) => self.show_error(error),
+        let mut updated = false;
+        let mut seen = HashSet::new();
+        let mut errors = Vec::new();
+        for (id, runtime) in &self.runtimes {
+            if !seen.insert(Rc::as_ptr(runtime)) {
+                continue;
+            }
+            let (changed, dropped, error) = runtime.borrow_mut().poll(ctx);
+            updated |= changed;
+            self.dropped_frames += dropped;
+            if let Some(error) = error {
+                let name = self.source(*id).map(|s| s.name.as_str()).unwrap_or("Fonte");
+                errors.push(format!("{name}: {error}"));
             }
         }
-        if self
-            .pending_camera_at
-            .is_some_and(|at| at.elapsed() > Duration::from_secs(12))
-            && self.pending_camera.is_some()
-        {
-            self.pending_camera = None;
-            self.pending_camera_at = None;
-            self.show_error("A câmera não respondeu. Feche outros aplicativos que possam estar usando o dispositivo e tente novamente.".into());
+        if updated {
+            self.count_frame();
         }
-        let pending_result = self
-            .pending_camera
-            .as_ref()
-            .map(|(_, capture)| capture.latest());
-        match pending_result {
-            Some(Ok(Some(frame))) => {
-                if let Some((device, capture)) = self.pending_camera.take() {
-                    let texture =
-                        load_texture(ctx, "camera", frame.width, frame.height, &frame.rgba);
-                    self.camera = Some(Camera {
-                        device,
-                        capture,
-                        frame,
-                        texture,
-                    });
-                    self.picker = None;
-                    self.selected = Some(Source::Camera);
-                    self.inspector_tab = true;
-                    self.camera_visible = true;
-                    self.notice_error = false;
-                    self.pending_camera_at = None;
-                    self.notice = "Câmera adicionada à composição.".into();
-                    if self.desktop.is_none() {
-                        self.count_frame();
-                    }
-                }
-            }
-            Some(Err(error)) => {
-                self.pending_camera = None;
-                self.show_error(error);
-            }
-            _ => {}
+        if !errors.is_empty() {
+            self.show_error(errors.join(" "));
         }
-        let desktop_result = self
-            .desktop
-            .as_ref()
-            .map(|desktop| desktop.session.try_read(desktop.frame.sequence));
-        match desktop_result {
-            Some(Ok(Some(frame))) => {
-                if let Some(desktop) = &mut self.desktop {
-                    self.dropped_frames += frame
-                        .sequence
-                        .saturating_sub(desktop.frame.sequence)
-                        .saturating_sub(1) as u64;
-                    desktop.texture.set(
-                        egui::ColorImage::from_rgba_unmultiplied(
-                            [frame.width as usize, frame.height as usize],
-                            &frame.rgba,
-                        ),
-                        TextureOptions::LINEAR,
-                    );
-                    desktop.frame = frame;
-                    self.count_frame();
-                }
+        if let Some(output) = &self.virtual_camera {
+            self.virtual_notice = output.status();
+            if output.finished() {
+                self.virtual_camera = None;
             }
-            Some(Err(error)) => {
-                self.desktop = None;
-                self.show_error(error);
-            }
-            _ => {}
+            ctx.request_repaint_after(Duration::from_millis(100));
         }
-        let camera_result = self.camera.as_ref().map(|camera| camera.capture.latest());
-        match camera_result {
-            Some(Ok(Some(frame))) => {
-                if let Some(camera) = &mut self.camera
-                    && frame.sequence != camera.frame.sequence
-                {
-                    camera.texture.set(
-                        egui::ColorImage::from_rgba_unmultiplied(
-                            [frame.width as usize, frame.height as usize],
-                            &frame.rgba,
-                        ),
-                        TextureOptions::LINEAR,
-                    );
-                    camera.frame = frame;
-                    if self.desktop.is_none() {
-                        self.count_frame();
-                    }
-                }
-            }
-            Some(Err(error)) => {
-                self.camera = None;
-                self.show_error(error);
-            }
-            _ => {}
-        }
-        if let Some(receiver) = &self.save_receiver
-            && let Ok(result) = receiver.try_recv()
-        {
+        if let Some(result) = self.save_receiver.as_ref().and_then(|r| r.try_recv().ok()) {
             self.save_receiver = None;
             self.notice_at = Instant::now();
-            self.notice_error = false;
             match result {
                 Ok(Some(path)) => {
                     self.saved_path = Some(path.into());
+                    self.notice_error = false;
                     self.notice = "Sua composição foi salva.".into();
                 }
-                Ok(None) => self.notice = "Salvamento cancelado.".into(),
-                Err(error) => self.show_error(format!("Não foi possível salvar: {error}")),
+                Ok(None) => {}
+                Err(e) => self.show_error(e),
             }
         }
         if self.fps_at.elapsed() >= Duration::from_secs(1) {
@@ -684,39 +574,32 @@ impl Studio {
             self.fps_frames = 0;
             self.fps_at = Instant::now();
         }
-        if self.desktop.is_some() || self.camera.is_some() || self.options.benchmark.is_some() {
-            ctx.request_repaint_after(Duration::from_secs(1));
-        }
-        if self.pending_desktop.is_some()
-            || self.pending_camera.is_some()
+        if self.runtimes.values().any(|r| r.borrow().loading_now())
             || self.image_receiver.is_some()
             || self.save_receiver.is_some()
-            || self
-                .picker
-                .as_ref()
-                .is_some_and(|picker| picker.receiver.is_some())
+            || self.picker.as_ref().is_some_and(|p| p.receiver.is_some())
         {
             ctx.request_repaint_after(Duration::from_millis(100));
         }
     }
-
+    fn clear_scene_runtime(&mut self) {
+        self.runtimes.clear();
+        self.picker = None;
+        self.picker_target = None;
+        self.image_receiver = None;
+        self.image_target = None;
+        self.selected = None;
+        self.properties = None;
+        self.canvas_drag = None;
+        self.fps = 0.0;
+        self.fps_frames = 0;
+    }
     fn stop_all(&mut self) {
         if let Some(output) = &self.virtual_camera {
             output.stop();
         }
-        self.image = None;
-        self.image_receiver = None;
-        self.cancel_pending();
-        self.desktop = None;
-        self.camera = None;
-        self.picker = None;
-        self.fps = 0.0;
-        self.fps_frames = 0;
-        self.selected = None;
-        self.notice_error = false;
-        self.notice = "Composição limpa. Todos os dispositivos foram liberados.".into();
+        self.clear_scene_runtime();
     }
-
     fn save_snapshot(&mut self, ctx: &egui::Context) {
         let scene = self.scene();
         let (sender, receiver) = mpsc::channel();
@@ -807,7 +690,7 @@ impl Studio {
                 intervals[((intervals.len() - 1) as f64 * p).round() as usize]
             }
         };
-        let report = serde_json::json!({"native":true,"renderer":"wgpu / Direct3D 12","adapter":self.adapter,"elapsed_seconds":seconds,"presented_frames":self.benchmark_frames,"presented_fps":if seconds>0.0 {self.benchmark_frames as f64/seconds}else{0.0},"frames_skipped":self.dropped_frames,"p50_frame_ms":percentile(0.5),"p95_frame_ms":percentile(0.95),"max_frame_ms":intervals.last().copied().unwrap_or_default(),"source":self.desktop.as_ref().map(|source| &source.source.name),"error":if timeout{Some(&self.notice)}else{None}});
+        let report = serde_json::json!({"native":true,"renderer":"wgpu / Direct3D 12","adapter":self.adapter,"elapsed_seconds":seconds,"presented_frames":self.benchmark_frames,"presented_fps":if seconds>0.0 {self.benchmark_frames as f64/seconds}else{0.0},"frames_skipped":self.dropped_frames,"p50_frame_ms":percentile(0.5),"p95_frame_ms":percentile(0.95),"max_frame_ms":intervals.last().copied().unwrap_or_default(),"source":self.current_scene().sources.first().map(|source| &source.name),"error":if timeout{Some(&self.notice)}else{None}});
         let path = self
             .options
             .report

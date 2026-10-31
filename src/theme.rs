@@ -9,7 +9,6 @@ pub const TEXT: Color32 = Color32::from_rgb(237, 242, 246);
 pub const MUTED: Color32 = Color32::from_rgb(151, 166, 181);
 pub const ACCENT: Color32 = Color32::from_rgb(82, 222, 183);
 pub const ACCENT_DARK: Color32 = Color32::from_rgb(21, 58, 51);
-pub const DANGER: Color32 = Color32::from_rgb(255, 137, 143);
 pub const AMBER: Color32 = Color32::from_rgb(239, 194, 115);
 
 #[derive(Clone, Copy)]
@@ -20,6 +19,8 @@ pub enum Icon {
     Image,
     Eye,
     Hidden,
+    Lock,
+    Unlock,
     Trash,
     Save,
     Play,
@@ -28,7 +29,6 @@ pub enum Icon {
     Help,
     Close,
     Grid,
-    Check,
     Folder,
     Mirror,
     Refresh,
@@ -38,7 +38,6 @@ pub enum ButtonKind {
     Primary,
     Secondary,
     Quiet,
-    Danger,
 }
 
 pub fn configure(ctx: &Context) {
@@ -146,9 +145,6 @@ pub fn card() -> Frame {
         .corner_radius(12)
         .inner_margin(16)
 }
-pub fn panel() -> Frame {
-    Frame::new().fill(PANEL).inner_margin(20)
-}
 pub fn modal_frame() -> Frame {
     Frame::new()
         .fill(PANEL)
@@ -187,14 +183,6 @@ pub fn button(ui: &mut Ui, icon: Icon, text: &str, kind: ButtonKind, width: f32)
                 ACCENT
             },
             BG,
-        ),
-        ButtonKind::Danger => (
-            if hovered {
-                Color32::from_rgb(75, 38, 45)
-            } else {
-                CARD
-            },
-            DANGER,
         ),
         ButtonKind::Secondary => (if hovered { HOVER } else { CARD }, TEXT),
         ButtonKind::Quiet => (if hovered { HOVER } else { Color32::TRANSPARENT }, MUTED),
@@ -291,6 +279,23 @@ pub fn paint_icon(p: &Painter, icon: Icon, r: Rect, color: Color32) {
         );
     };
     match icon {
+        Icon::Lock | Icon::Unlock => {
+            box_(5.0, 10.0, 14.0, 11.0);
+            line((8.0, 10.0), (8.0, 4.0));
+            line((8.0, 4.0), (16.0, 4.0));
+            line(
+                (16.0, 4.0),
+                (
+                    16.0,
+                    if matches!(icon, Icon::Lock) {
+                        10.0
+                    } else {
+                        7.0
+                    },
+                ),
+            );
+            line((12.0, 14.0), (12.0, 17.0));
+        }
         Icon::Monitor => {
             box_(2.0, 3.0, 20.0, 14.0);
             line((12.0, 17.0), (12.0, 21.0));
@@ -381,10 +386,6 @@ pub fn paint_icon(p: &Painter, icon: Icon, r: Rect, color: Color32) {
             line((15.0, 3.0), (15.0, 21.0));
             line((3.0, 9.0), (21.0, 9.0));
             line((3.0, 15.0), (21.0, 15.0));
-        }
-        Icon::Check => {
-            line((4.0, 12.0), (10.0, 18.0));
-            line((10.0, 18.0), (21.0, 5.0));
         }
         Icon::Folder => {
             p.add(Shape::closed_line(
