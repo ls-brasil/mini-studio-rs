@@ -89,8 +89,8 @@ impl Studio {
         if self.scenes.scenes.len() <= 1 {
             return;
         }
-        self.clear_scene_runtime();
         self.scenes.scenes.remove(self.scenes.active);
+        self.clear_scene_runtime();
         self.scenes.active = self.scenes.active.min(self.scenes.scenes.len() - 1);
         self.activate_scene(ctx);
         self.persist_scenes(false);

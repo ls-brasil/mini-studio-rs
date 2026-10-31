@@ -1439,6 +1439,53 @@ fn reveal_file(path: &Path) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn camera_runtime_is_kept_and_shared_across_scenes_until_stop() {
+        use crate::scenes::{CameraSource, SavedScene, SavedSource};
+        use crate::source_runtime::{RuntimeSource, Stream};
+        use std::{cell::RefCell, rc::Rc};
+        let mut h = Harness::new(vec2(1000.0, 800.0));
+        let input = SourceInput::Camera(CameraSource {
+            id: "camera-test".into(),
+            name: "Camera".into(),
+        });
+        let source = SavedSource {
+            id: 100,
+            name: "Camera".into(),
+            input,
+            visible: true,
+            locked: false,
+            transform: Transform::default(),
+        };
+        let mut other = source.clone();
+        other.id = 101;
+        h.app.scenes.scenes = vec![
+            SavedScene {
+                name: "A".into(),
+                sources: vec![source],
+            },
+            SavedScene {
+                name: "B".into(),
+                sources: vec![other],
+            },
+        ];
+        h.app.scenes.active = 0;
+        let runtime = Rc::new(RefCell::new(RuntimeSource {
+            pixels: None,
+            texture: None,
+            stream: Stream::Offline,
+            error: None,
+        }));
+        h.app.runtimes.insert(100, runtime.clone());
+        h.app.switch_scene(&h.ctx, 1);
+        assert!(Rc::ptr_eq(&h.app.runtimes[&100], &runtime));
+        assert!(Rc::ptr_eq(&h.app.runtimes[&101], &runtime));
+        h.app.switch_scene(&h.ctx, 0);
+        assert!(Rc::ptr_eq(&h.app.runtimes[&100], &runtime));
+        h.app.stop_all();
+        assert!(h.app.runtimes.is_empty());
+    }
+
     use super::*;
     use crate::{Options, composition::Pixels, image_source};
     use std::collections::HashMap;

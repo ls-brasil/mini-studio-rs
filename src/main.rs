@@ -338,9 +338,14 @@ impl Studio {
         };
         let input = source.input.clone();
         let shared = self
-            .current_scene()
-            .sources
+            .scenes
+            .scenes
             .iter()
+            .filter(|scene| {
+                matches!(input, SourceInput::Camera(_))
+                    || std::ptr::eq(*scene, self.current_scene())
+            })
+            .flat_map(|scene| &scene.sources)
             .filter(|s| s.id != id && s.input == input)
             .find_map(|s| {
                 self.runtimes
@@ -589,7 +594,15 @@ impl Studio {
         }
     }
     fn clear_scene_runtime(&mut self) {
-        self.runtimes.clear();
+        let cameras: HashSet<_> = self
+            .scenes
+            .scenes
+            .iter()
+            .flat_map(|scene| &scene.sources)
+            .filter(|source| matches!(source.input, SourceInput::Camera(_)))
+            .map(|source| source.id)
+            .collect();
+        self.runtimes.retain(|id, _| cameras.contains(id));
         self.picker = None;
         self.picker_target = None;
         self.image_receiver = None;
@@ -607,6 +620,7 @@ impl Studio {
             output.stop();
         }
         self.clear_scene_runtime();
+        self.runtimes.clear();
     }
     fn save_snapshot(&mut self, ctx: &egui::Context) {
         let scene = self.scene();
