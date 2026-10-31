@@ -1,5 +1,6 @@
 {
   "name": "mini-studio-rs",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -15,6 +16,5 @@
     "lint": "cargo clippy --all-targets -- -D warnings",
     "fmt": "cargo fmt",
     "fmt:check": "cargo fmt -- --check"
-  },
-  "version": "1.0.0"
+  }
 }

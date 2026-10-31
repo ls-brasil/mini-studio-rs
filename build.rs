@@ -1,7 +1,7 @@
 fn main() {
     println!("cargo:rerun-if-changed=assets/mini-studio.ico");
     println!("cargo:rerun-if-changed=assets/app.manifest");
-    println!("cargo:rerun-if-changed=Cargo.toml");
+    println!("cargo:rerun-if-changed=package.json");
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
         return;
     }
@@ -17,7 +17,23 @@ fn main() {
         .display()
         .to_string()
         .replace('\\', "\\\\");
-    let version = std::env::var("CARGO_PKG_VERSION").unwrap();
+    let package: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(root.join("package.json")).expect("Falha ao ler package.json"),
+    )
+    .expect("package.json inválido");
+    let version = package["version"]
+        .as_str()
+        .expect("version ausente no package.json");
+    let parts: Vec<_> = version.split('.').collect();
+    assert!(
+        parts.len() == 3
+            && parts.iter().all(|part| {
+                !part.is_empty()
+                    && part.bytes().all(|byte| byte.is_ascii_digit())
+                    && part.parse::<u16>().is_ok()
+            }),
+        "version do package.json deve ter três componentes numéricos entre 0 e 65535"
+    );
     let numeric = format!("{},0", version.replace('.', ","));
     let resource = format!(
         r#"

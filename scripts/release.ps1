@@ -4,9 +4,10 @@ $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
 Push-Location $repo
 try {
-    $manifest = Get-Content (Join-Path $repo 'Cargo.toml') -Raw
-    if ($manifest -notmatch '(?m)^version\s*=\s*"([0-9]+\.[0-9]+\.[0-9]+)"') { throw 'Versão ausente no Cargo.toml.' }
-    $version = $Matches[1]
+    $version = (Get-Content (Join-Path $repo 'package.json') -Raw | ConvertFrom-Json).version
+    if ($version -cnotmatch '^[0-9]+\.[0-9]+\.[0-9]+$') { throw 'version inválido no package.json: use major.minor.patch.' }
+    $parts = $version.Split('.')
+    if ([decimal]$parts[0] -gt 255 -or [decimal]$parts[1] -gt 255 -or [decimal]$parts[2] -gt 65535) { throw 'version excede os limites do MSI (255.255.65535).' }
     if (-not $SkipBuild) {
         cargo fmt -- --check
         if ($LASTEXITCODE -ne 0) { throw 'Formatação inválida.' }

@@ -97,7 +97,7 @@ cargo build --release
 .\scripts\release.ps1
 ```
 
-`release.ps1` verifica formatação, testes e Clippy, compila o aplicativo e o componente nativo, reúne os avisos de terceiros e gera MSI, ZIP e SHA-256 em `dist`. A versão vem de `Cargo.toml` e é incorporada ao EXE, à DLL e ao instalador. `-SkipBuild` reutiliza binários já compilados, conferindo suas versões. `package.json` contém atalhos opcionais para esses comandos.
+`release.ps1` verifica formatação, testes e Clippy, compila o aplicativo e o componente nativo, reúne os avisos de terceiros e gera MSI, ZIP e SHA-256 em `dist`. A versão vem do campo `version` do `package.json` e é incorporada ao EXE, à DLL e ao instalador. Para uma nova versão, altere apenas esse campo e recompile. Use `major.minor.patch`, com limites de 255.255.65535 para o MSI. A versão declarada no `Cargo.toml` é apenas metadado do pacote Rust. `-SkipBuild` reutiliza binários já compilados, conferindo suas versões. `package.json` também contém atalhos opcionais para esses comandos.
 
 Para desenvolvimento do componente, `scripts/install-vcam.ps1` e `scripts/uninstall-vcam.ps1` continuam disponíveis e exigem PowerShell como administrador. Para usuários finais, use o MSI. Não misture os dois mecanismos de instalação/remoção.
 
