@@ -1,5 +1,7 @@
 # Decisões do MVP
 
+> Documento histórico. O produto atual é o **Mini Studio 1.0.0**; consulte o [README](../README.md), o [histórico de versões](../CHANGELOG.md) e a [validação da entrega](validacao-1.0.0.md).
+
 ## Escopo
 
 Validar uma versão leve do OBS Studio com captura de uma tela ou janela e uma câmera. A prioridade é funcionamento, fluidez e consumo de recursos. A composição permite câmera sozinha ou sobreposta, com ajustes de canto, tamanho e espelhamento, e salvamento PNG em 1280 × 720.

@@ -1,0 +1,69 @@
+MINI STUDIO 1.0.0
+Seu espaço para criar e apresentar.
+LS Brasil
+
+COMECE AQUI
+1. Instale pelo arquivo MiniStudio-1.0.0-Setup.msi. O instalador cria os
+   atalhos e configura a câmera virtual no Windows 11.
+2. Abra o Mini Studio. Adicione Tela, Janela, Câmera ou Imagem.
+3. Clique em uma fonte para ajustar sua aparência. O olho mostra ou oculta.
+4. Salve a composição em PNG ou inicie a câmera virtual para usá-la em outro
+   aplicativo. Nesse aplicativo, selecione "Mini Studio RS Cam".
+
+SUA COMPOSIÇÃO
+Você pode combinar uma tela OU janela, uma imagem e uma câmera.
+A imagem pode ficar no fundo ou sobre a captura. A câmera fica na frente.
+Todas as fontes preservam suas proporções. A saída tem 1280 x 720 pixels.
+Arraste a imagem na prévia para posicioná-la. Arraste a câmera para trocar
+de canto. Os controles de tamanho permitem ajustar o enquadramento.
+As guias e bordas de seleção da prévia não aparecem no arquivo ou na câmera.
+
+IMAGENS
+Abra PNG ou JPEG, ou arraste um arquivo para o Mini Studio. A transparência
+PNG é preservada. Limites: 32 MiB por arquivo, 16 milhões de pixels e 8192
+pixels por lado. Um arquivo inválido não substitui sua imagem anterior.
+
+CÂMERA VIRTUAL
+Requer Windows 11, build 22000 ou superior, 64 bits.
+Clique em "Iniciar câmera virtual" e selecione "Mini Studio RS Cam" no
+aplicativo de reunião. O Windows pode acrescentar "Windows Virtual Camera"
+ao nome. A câmera virtual envia somente vídeo, sem áudio.
+Você pode trocar, ocultar ou remover fontes durante o uso. "Parar câmera
+virtual" mantém sua composição. "Limpar composição" libera todos os
+dispositivos e encerra a saída. Fechar o Mini Studio encerra a publicação.
+
+ATALHOS
+Ctrl+O: abrir imagem.  Ctrl+S: salvar PNG.  Del: remover fonte selecionada.
+F1: ajuda e tamanho da interface.  Esc: fechar diálogo ou desmarcar fonte.
+Tab: navegar entre os controles. Enter ou Espaço: ativar o controle.
+Seus ajustes de enquadramento e interface são lembrados. Fontes e dispositivos
+não são reabertos automaticamente.
+
+SE ALGO NÃO FUNCIONAR
+- Câmera física: feche outros aplicativos que usam o dispositivo e confira
+  o acesso em Configurações do Windows > Privacidade e segurança > Câmera.
+- Câmera virtual ausente: execute o instalador MSI para instalar ou reparar.
+  Reabra o aplicativo de reunião após iniciar a saída.
+- Imagem repetida na prévia: capture outra tela ou uma janela específica.
+- Janela minimizada: restaure a janela para retomar a captura.
+- Conteúdo preto: aplicativos com proteção de conteúdo podem impedir captura.
+- Atualização ou remoção: feche o estúdio e os consumidores. Se o componente
+  continuar em uso, reinicie o Windows antes de executar o instalador.
+
+INSTALAÇÃO E PRIVACIDADE
+Captura e exportação exigem Windows 10 1903+, x64, com GPU Direct3D 12.
+O instalador pede administrador. O aplicativo roda sem elevação.
+O arquivo de transporte fica em ProgramData\MiniStudioRS; somente o usuário
+que o criou, administradores e o serviço de câmera podem acessá-lo.
+A saída admite um produtor por vez. Em computador compartilhado, o arquivo
+pertence ao primeiro usuário que iniciar a saída; um administrador pode
+remover o arquivo com todos os consumidores fechados para trocar o produtor.
+Preferências ficam em LocalAppData\MiniStudioRS\preferences.json.
+Para desinstalar, use Configurações do Windows > Aplicativos > Mini Studio.
+
+VERSÃO PORTÁTIL
+Extraia o ZIP e abra mini-studio-rs.exe. Para usar a câmera virtual, instale
+o componente através do MSI da mesma versão.
+
+O Mini Studio compõe vídeo ao vivo e exporta PNG. Não grava vídeo, transmite
+pela internet, captura áudio nem oferece múltiplas cenas nesta versão.

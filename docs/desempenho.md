@@ -1,6 +1,6 @@
 # Validação de desempenho nativo
 
-O objetivo é pelo menos 30 FPS com baixo consumo de CPU. A versão atual usa interface Rust/egui, GPU via wgpu/Direct3D 12, Windows Graphics Capture e câmera Media Foundation. A avaliação completa de CPU/GPU, captura real e uso prolongado será realizada pelo usuário. A verificação curta da saída virtual está registrada abaixo.
+O objetivo é pelo menos 30 FPS com baixo consumo de CPU. A versão atual usa interface Rust/egui, GPU via wgpu/Direct3D 12, Windows Graphics Capture e câmera Media Foundation. A saída virtual foi validada por 10 minutos com conteúdo sintético variável. Os resultados da versão 1.0 estão em [validação da entrega](validacao-1.0.0.md). As medições históricas abaixo continuam identificadas por etapa e não representam comparação controlada de desempenho.
 
 ## Validação simples
 
@@ -51,3 +51,11 @@ Ambiente: Windows build 26300.9818, MSVC 19.51, Windows SDK 10.0.26100.0, build 
 O teste nativo instancia a media source no próprio processo e usa arquivo temporário. Não valida a enumeração do dispositivo instalado pelo Frame Server, aplicativos de reunião nem a composição Rust completa a 30 FPS. Nenhuma instalação elevada foi executada.
 
 Para validar a entrega, compare imagem estática, tela/janela em movimento e combinação com câmera. Registre FPS publicados (indicador próprio da saída), FPS recebidos no consumidor, CPU/GPU/memória por 10 minutos e nomes/versões de dois consumidores. O FPS da prévia mede quadros novos; ele pode ficar em zero com uma imagem estática enquanto a saída virtual repete quadros regularmente.
+
+## Validação da 1.0.0 — saída instalada
+
+O teste Rust publicou cenas sintéticas variáveis no componente já instalado e consumiu a câmera real via Media Foundation: **17.999 quadros em 600 segundos (30,00 FPS)** após aquecimento de aproximadamente 5,2 segundos. Também verificou mudança de cores, filtro da própria saída no seletor, desaparecimento do dispositivo após parada e reinício. FFmpeg/DirectShow recebeu **150 quadros em 5 segundos** em um teste separado.
+
+Uma amostragem parcial de 94 pontos durante 466 segundos do teste registrou memória privada entre 5,54 e 16,30 MiB, terminando em 10,57 MiB. Esses valores são do processo de teste (produtor + consumidor), não do aplicativo gráfico, e não incluem memória do Frame Server/GPU. Houve compilação e outras tarefas na máquina; não se trata de benchmark controlado de CPU. Logs locais: `target/qa/vcam-soak.log`, `target/qa/soak-memory.json` e `target/qa/ffmpeg-vcam.framemd5`.
+
+Isso comprova a cadência desse cenário sintético e sua integração com o dispositivo instalado. Não substitui medição de captura e composição simultâneas com câmera física, nem testes em aplicativos de reunião específicos.

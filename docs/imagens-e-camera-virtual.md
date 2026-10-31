@@ -1,12 +1,12 @@
 # Imagens e câmera virtual
 
-## Status e objetivo
+## Arquitetura e escopo
 
-Em 30/10/2026, o usuário definiu dois novos recursos para o Mini Studio: **imagens** e **câmera virtual**. A implementação foi adicionada em 31/10/2026; a validação em aplicativos consumidores permanece pendente.
+Em 30/10/2026, o usuário definiu dois novos recursos para o Mini Studio: **imagens** e **câmera virtual**. A implementação foi adicionada em 31/10/2026; a versão 1.0.0 inclui validação real com Media Foundation e FFmpeg. Aplicativos de reunião específicos permanecem sujeitos a teste de compatibilidade.
 
-A direção permanece um aplicativo nativo para Windows, leve e com alvo de 30 FPS. A versão atual oferece uma tela ou janela, uma imagem, uma câmera física, exportação PNG e saída virtual opcional. A validação prática continua com o usuário.
+A direção permanece um aplicativo nativo para Windows, leve e com alvo de 30 FPS. A versão atual oferece uma tela ou janela, uma imagem, uma câmera física, exportação PNG e saída virtual opcional. Os resultados e limites de validação estão em [validação da 1.0](validacao-1.0.0.md).
 
-Os requisitos abaixo orientam a entrega implementada. As listas de aceite representam validação funcional pelo usuário; testes automatizados não marcam esses itens como concluídos.
+Os requisitos abaixo registram a entrega implementada. As listas de aceite preservam os ensaios manuais propostos na expansão; os resultados atuais e seus limites estão no relatório da versão 1.0, não representam funcionalidades por implementar.
 
 ## Imagens como fonte
 
@@ -62,7 +62,7 @@ Compatibilidade com aplicativos específicos será registrada após validação.
 - **Identidade própria:** CLSID `{F0C418C8-9211-479E-BAAE-3CBF90F15D37}`, nome “Mini Studio RS Cam”, pasta `MiniStudioRS`. Não usa nem substitui a câmera do projeto irmão.
 - **Formato:** NV12, 1280 × 720, 30 FPS, matriz BT.709, faixa limitada. A conversão RGBA → NV12 faz média de croma 2 × 2. NV12 implica subamostragem de cor; não é uma cópia sem perdas do PNG.
 - **Composição:** prévia na GPU; PNG e saída virtual em CPU. Geometria, visibilidade e ordem vêm de `Scene::layers()`. Redimensionamento SIMD, buffers de origem compartilhados por `Arc`, sem cópia dos pixels a cada repintura da interface. A saída mantém apenas a cena mais recente e reutiliza o NV12 enquanto ela não muda. Não se trata de composição GPU ponta a ponta; custo com fontes em movimento precisa ser medido.
-- **Transporte:** arquivo mapeado em `%ProgramData%\MiniStudioRS\vcam-frames.bin`, um quadro NV12 e cabeçalho de 64 bytes. Leitor e escritor sincronizam explicitamente com `LockFileEx`; outro intervalo reserva o produtor. O instalador concede escrita ao SID configurado e leitura ao Local Service, sem acesso geral de escrita. Um heartbeat invalida quadros após 500 ms; parar normalmente zera os pixels e o heartbeat. Uma interrupção abrupta pode deixar bytes no arquivo até o próximo início/remoção, embora o consumidor deixe de exibi-los pelo heartbeat.
+- **Transporte:** arquivo mapeado em `%ProgramData%\MiniStudioRS\vcam-frames.bin`, um quadro NV12 e cabeçalho de 64 bytes. Leitor e escritor sincronizam explicitamente com `LockFileEx`; outro intervalo reserva o produtor. O MSI permite criar o arquivo na pasta, com acesso ao arquivo restrito ao criador, administradores e Local Service. O script de desenvolvimento concede escrita ao SID configurado e leitura ao Local Service. Um heartbeat invalida quadros após 500 ms; parar normalmente zera os pixels e o heartbeat. Uma interrupção abrupta pode deixar bytes no arquivo até o próximo início/remoção, embora o consumidor deixe de exibi-los pelo heartbeat.
 - **Ciclo de vida:** COM, criação, publicação e remoção ocorrem na mesma thread MTA. A parada é assíncrona na interface; fechar o processo aguarda a liberação. O consumidor recebe um quadro neutro quando o produtor não está disponível. Nenhuma fila cresce com consumidor lento.
 - **Referência:** o componente C++ foi adaptado dos fontes locais LS Brasil em `mini-studio/native/MiniStudioVCam`, commit `2c6f69ce8eabe4332d321bdc7da0d80171379564`, com novo transporte, identidade e correções de ciclo de vida/buffers. Não inclui código nem binário do OBS. A árvore de origem não contém arquivo LICENSE; esta adaptação interna não atribui uma licença pública nova ao código. Histórico em `native/MiniStudioRSVCam/ORIGEM.md`.
 
@@ -72,7 +72,7 @@ A [documentação de fontes do Frame Server](https://learn.microsoft.com/en-us/w
 
 `vcam_transport_test` exercita escritor/leitor concorrentes, exclusão de segundo produtor, heartbeat e reinício. `vcam_media_test` publica quadros NV12 em arquivo temporário e os consome através de `IMFSourceReader` e da media source real, verificando pixels, mudança do conteúdo, formato, timestamps, tamanho de buffer, cadência e liberação COM.
 
-Esses testes não registram o dispositivo nem executam o serviço Frame Server. A descoberta em dois aplicativos reais, instalação/remoção elevada e teste contínuo de 10 minutos continuam pendentes. Não foi instalado componente no sistema durante a implementação. Consulte os comandos no [README](../README.md).
+Esses dois testes nativos não registram o dispositivo nem executam o serviço Frame Server. Na preparação da 1.0, o componente já instalado também foi consumido por um teste Rust/Media Foundation (17.999 quadros em 600 segundos, 30,00 FPS) e pelo FFmpeg/DirectShow (150 quadros em 5 segundos). A enumeração, mudança do conteúdo, parada e reinício passaram. A instalação/remoção elevada do novo MSI e aplicativos de reunião específicos não foram exercitados nesta sessão. Consulte [a validação da 1.0](validacao-1.0.0.md) e os comandos no [README](../README.md).
 
 ### Orientação de arquitetura
 
