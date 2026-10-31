@@ -8,7 +8,7 @@ Validar uma versão leve do OBS Studio com captura de uma tela ou janela e uma c
 
 ## Expansão definida após o MVP
 
-Em 30/10/2026, foram adicionados ao escopo futuro **imagens como fonte** e **saída por câmera virtual**. Eles ainda não estão implementados e não alteram a descrição das funcionalidades atuais acima. O plano está em [Imagens e câmera virtual](imagens-e-camera-virtual.md), com requisitos propostos e critérios para validação pelo usuário.
+Em 30/10/2026, foram adicionados ao escopo futuro **imagens como fonte** e **saída por câmera virtual**. Ambos foram implementados na expansão de 31/10/2026; a descrição acima registra o escopo histórico do MVP. O plano está em [Imagens e câmera virtual](imagens-e-camera-virtual.md), com requisitos propostos e critérios para validação pelo usuário.
 
 Áudio, gravação, transmissão e múltiplas cenas continuam sem compromisso de implementação nesta expansão.
 
@@ -19,7 +19,7 @@ Em 30/10/2026, foram adicionados ao escopo futuro **imagens como fonte** e **sa�
 - **Preparação:** redução para caber em 1280 × 720, preservando proporção, com redimensionamento SIMD via `fast_image_resize`.
 - **Câmera:** captura nativa pelo Windows Media Foundation, sem `getUserMedia` ou permissão do navegador.
 - **Prévia:** texturas e composição na GPU. O aplicativo solicita atualização quando há quadros ou interação; o alvo da captura é 30 FPS.
-- **PNG:** composição em CPU apenas ao salvar, usando as mesmas funções de geometria da prévia. O arquivo tem fundo opaco e resolução 1280 × 720; o seletor de destino é nativo.
+- **PNG e saída virtual:** composição em CPU fora da thread da interface, usando a mesma lista de camadas da prévia. A saída virtual recompõe somente quando fontes ou ajustes mudam e repete o quadro em um relógio próprio de 30 FPS. O arquivo tem fundo opaco e resolução 1280 × 720; o seletor de destino é nativo.
 - **Build:** `Cargo.toml` na raiz; `cargo run` e `cargo build --release`. O `package.json` oferece somente atalhos opcionais.
 
 O objetivo de pelo menos 30 FPS com baixo consumo de CPU depende de validação na máquina de uso. Uma fonte estática pode gerar menos quadros. Configurar a cadência para 30 FPS não comprova a taxa efetivamente exibida.

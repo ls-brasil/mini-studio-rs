@@ -9,7 +9,8 @@ authors = ["LS Brasil"]
 [dependencies]
 eframe = { version = "0.33.3", default-features = false, features = ["default_fonts", "wgpu"] }
 wgpu = { version = "27", default-features = false, features = ["dx12", "wgsl", "std"] }
-image = { version = "0.25", default-features = false, features = ["png"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+libloading = "0.8"
 rfd = "0.15"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

@@ -1,0 +1,10 @@
+LIBRARY MiniStudioRSVCam
+EXPORTS
+    DllGetClassObject   PRIVATE
+    DllCanUnloadNow     PRIVATE
+    DllRegisterServer   PRIVATE
+    DllUnregisterServer PRIVATE
+    DllInstall          PRIVATE
+    MSVCam_StartSession
+    MSVCam_StopSession
+    MSVCam_Publish

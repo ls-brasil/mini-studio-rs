@@ -2,17 +2,17 @@
 
 ## Status e objetivo
 
-Em 30/10/2026, o usuário definiu dois novos recursos para o Mini Studio: **imagens** e **câmera virtual**. Este documento prepara a implementação; nenhum dos dois está disponível na versão atual.
+Em 30/10/2026, o usuário definiu dois novos recursos para o Mini Studio: **imagens** e **câmera virtual**. A implementação foi adicionada em 31/10/2026; a validação em aplicativos consumidores permanece pendente.
 
-A direção permanece um aplicativo nativo para Windows, leve e com alvo de 30 FPS. O MVP atual oferece uma tela ou janela, uma câmera física e exportação PNG. A validação prática continua com o usuário.
+A direção permanece um aplicativo nativo para Windows, leve e com alvo de 30 FPS. A versão atual oferece uma tela ou janela, uma imagem, uma câmera física, exportação PNG e saída virtual opcional. A validação prática continua com o usuário.
 
-Os dois recursos estão aprovados como escopo futuro. Formatos, controles e escolhas técnicas abaixo são a proposta inicial para executá-los, sujeita a ajustes durante o desenvolvimento.
+Os requisitos abaixo orientam a entrega implementada. As listas de aceite representam validação funcional pelo usuário; testes automatizados não marcam esses itens como concluídos.
 
 ## Imagens como fonte
 
 Permitir usar um arquivo local como fundo ou sobreposição, por exemplo uma arte de apresentação ou um logotipo. Importar uma imagem é uma nova fonte; o botão existente de salvar PNG continua sendo uma exportação da composição.
 
-### Primeira entrega proposta
+### Entrega implementada
 
 - Adicionar uma imagem por seletor de arquivo nativo, com suporte inicial a PNG e JPEG.
 - Usar a imagem sozinha, como fundo ou como sobreposição à tela/janela; manter a câmera física opcional.
@@ -27,7 +27,7 @@ Animações, GIF, SVG, sequência de imagens, múltiplas imagens simultâneas e 
 
 Decodificar fora da thread da interface e enviar a textura à GPU somente ao carregar ou substituir a imagem. Reutilizar a textura durante a composição; uma imagem estática não deve provocar decodificação ou upload a cada quadro.
 
-Compartilhar geometria e ordem das fontes entre prévia, PNG e futura câmera virtual. A exportação PNG deve preservar a aparência da composição, com fundo final opaco como no MVP atual. Dimensionar os limites de arquivo e de pixels antes de alocar a imagem decodificada.
+Compartilhar geometria e ordem das fontes entre prévia, PNG e câmera virtual. A exportação PNG deve preservar a aparência da composição, com fundo final opaco como no MVP original. Dimensionar os limites de arquivo e de pixels antes de alocar a imagem decodificada.
 
 ### Aceite para validação
 
@@ -42,7 +42,7 @@ Compartilhar geometria e ordem das fontes entre prévia, PNG e futura câmera vi
 
 Disponibilizar a composição final do Mini Studio como dispositivo de vídeo selecionável em outros aplicativos, como ferramentas de reunião. O aplicativo consumidor recebe a composição, sem os controles ou bordas da interface do Mini Studio.
 
-### Primeira entrega proposta
+### Entrega implementada
 
 - Oferecer controles explícitos **Iniciar câmera virtual** e **Parar câmera virtual**, com estados de inicialização, ativa, parada e erro.
 - Publicar inicialmente vídeo de 1280 × 720 a 30 FPS, sem áudio.
@@ -55,17 +55,24 @@ Disponibilizar a composição final do Mini Studio como dispositivo de vídeo se
 
 Compatibilidade com aplicativos específicos será registrada após validação. Não há promessa atual de suporte universal, múltiplos consumidores simultâneos ou funcionamento com o Mini Studio fechado.
 
-### Decisões técnicas antes da implementação
+### Decisão técnica — 31/10/2026
 
-A tecnologia da câmera virtual ainda não está escolhida. Fazer uma prova pequena de publicação e consumo de vídeo antes de integrar todos os controles. Essa prova deve esclarecer:
+- **Plataforma:** Windows 11 x64, build 22000+, pela API [MFCreateVirtualCamera](https://learn.microsoft.com/en-us/windows/win32/api/mfvirtualcamera/nf-mfvirtualcamera-mfcreatevirtualcamera). Imagens e capturas continuam no Windows 10.
+- **Dispositivo:** DLL COM `MiniStudioRSVCam.dll` com Media Foundation, acesso CurrentUser e duração Session. Registro em HKLM e instalação em Program Files exigem administrador uma vez; iniciar/parar o aplicativo não exige elevação. A DLL é carregada dinamicamente para não impedir o aplicativo de abrir no Windows 10.
+- **Identidade própria:** CLSID `{F0C418C8-9211-479E-BAAE-3CBF90F15D37}`, nome “Mini Studio RS Cam”, pasta `MiniStudioRS`. Não usa nem substitui a câmera do projeto irmão.
+- **Formato:** NV12, 1280 × 720, 30 FPS, matriz BT.709, faixa limitada. A conversão RGBA → NV12 faz média de croma 2 × 2. NV12 implica subamostragem de cor; não é uma cópia sem perdas do PNG.
+- **Composição:** prévia na GPU; PNG e saída virtual em CPU. Geometria, visibilidade e ordem vêm de `Scene::layers()`. Redimensionamento SIMD, buffers de origem compartilhados por `Arc`, sem cópia dos pixels a cada repintura da interface. A saída mantém apenas a cena mais recente e reutiliza o NV12 enquanto ela não muda. Não se trata de composição GPU ponta a ponta; custo com fontes em movimento precisa ser medido.
+- **Transporte:** arquivo mapeado em `%ProgramData%\MiniStudioRS\vcam-frames.bin`, um quadro NV12 e cabeçalho de 64 bytes. Leitor e escritor sincronizam explicitamente com `LockFileEx`; outro intervalo reserva o produtor. O instalador concede escrita ao SID configurado e leitura ao Local Service, sem acesso geral de escrita. Um heartbeat invalida quadros após 500 ms; parar normalmente zera os pixels e o heartbeat. Uma interrupção abrupta pode deixar bytes no arquivo até o próximo início/remoção, embora o consumidor deixe de exibi-los pelo heartbeat.
+- **Ciclo de vida:** COM, criação, publicação e remoção ocorrem na mesma thread MTA. A parada é assíncrona na interface; fechar o processo aguarda a liberação. O consumidor recebe um quadro neutro quando o produtor não está disponível. Nenhuma fila cresce com consumidor lento.
+- **Referência:** o componente C++ foi adaptado dos fontes locais LS Brasil em `mini-studio/native/MiniStudioVCam`, commit `2c6f69ce8eabe4332d321bdc7da0d80171379564`, com novo transporte, identidade e correções de ciclo de vida/buffers. Não inclui código nem binário do OBS. A árvore de origem não contém arquivo LICENSE; esta adaptação interna não atribui uma licença pública nova ao código. Histórico em `native/MiniStudioRSVCam/ORIGEM.md`.
 
-1. Versões do Windows atendidas e eventual diferença em relação ao requisito atual do MVP.
-2. Mecanismo de dispositivo virtual, necessidade de componente nativo separado, registro, instalação e permissões.
-3. Formatos de pixel e negociação aceitos pelos aplicativos consumidores escolhidos para validação.
-4. Transporte de quadros entre composição e dispositivo, custo de cópias, uso de GPU e encerramento seguro.
-5. Comportamento ao desconectar o consumidor, parar a saída ou fechar o processo produtor.
+A [documentação de fontes do Frame Server](https://learn.microsoft.com/en-us/windows-hardware/drivers/stream/frame-server-custom-media-source) orienta o uso de buffers Media Foundation e o acesso pelo serviço Local Service. A [amostra oficial de câmera virtual](https://github.com/microsoft/Windows-Camera/tree/master/Samples/VirtualCamera) documenta a separação entre aplicativo, registro e media source.
 
-Consultar a documentação oficial vigente das APIs escolhidas e registrar a decisão antes de assumir requisitos de distribuição. A implementação dos projetos irmãos pode servir como referência, após avaliar compatibilidade e licença; este plano não pressupõe reutilização de binários ou dependência do OBS instalado.
+### Prova automatizada e limites
+
+`vcam_transport_test` exercita escritor/leitor concorrentes, exclusão de segundo produtor, heartbeat e reinício. `vcam_media_test` publica quadros NV12 em arquivo temporário e os consome através de `IMFSourceReader` e da media source real, verificando pixels, mudança do conteúdo, formato, timestamps, tamanho de buffer, cadência e liberação COM.
+
+Esses testes não registram o dispositivo nem executam o serviço Frame Server. A descoberta em dois aplicativos reais, instalação/remoção elevada e teste contínuo de 10 minutos continuam pendentes. Não foi instalado componente no sistema durante a implementação. Consulte os comandos no [README](../README.md).
 
 ### Orientação de arquitetura
 
@@ -86,12 +93,10 @@ O caminho final de composição e transporte depende da prova técnica. Prioriza
 - [ ] Usar por pelo menos 10 minutos, observando latência, CPU, GPU e memória, sem crescimento contínuo de memória ou atraso acumulado.
 - [ ] Validar as instruções de instalação e remoção na configuração de Windows escolhida para suporte.
 
-## Ordem de implementação proposta
+## Estado da entrega
 
-1. Adicionar imagens e consolidar ordem, geometria e visibilidade das fontes na prévia e no PNG.
-2. Fazer a prova de câmera virtual com quadro de teste; documentar tecnologia, requisitos e consumidores testados.
-3. Conectar a composição real à câmera virtual com cadência de 30 FPS.
-4. Adicionar controles, tratamento de erros e instalação/remoção conforme a tecnologia escolhida.
-5. Compilar e entregar roteiro atualizado para validação pelo usuário, registrando resultados em [desempenho](desempenho.md).
+Implementados: imagens PNG/JPEG em segundo plano, controles e ordem compartilhada das fontes, composição opaca, saída virtual em thread própria, componente nativo, scripts de build/instalação/remoção e testes de transporte/Media Foundation.
 
-Áudio, gravação, transmissão, múltiplas cenas e edição avançada continuam fora desta expansão. Nenhuma etapa deste documento implica que esses recursos já estejam implementados ou validados.
+Limites de imagem: arquivo até 32 MiB, até 16 milhões de pixels e 8192 pixels por lado, limite de alocação do decodificador de 128 MiB. A imagem é normalizada para RGBA e reduzida antes do upload; esses limites não representam um teto para a memória total do processo.
+
+Pendente de validação pelo usuário: os critérios de aceite acima e as medições em [desempenho](desempenho.md). Áudio, gravação, transmissão, múltiplas cenas e edição avançada continuam fora desta expansão.

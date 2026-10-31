@@ -2,10 +2,12 @@
 
 mod camera;
 mod composition;
+mod image_source;
 mod native_capture;
+mod virtual_camera;
 
 use camera::{CameraCapture, CameraDevice, CameraFrame};
-use composition::{CameraPosition, camera_rect, compose_snapshot, fit_rect};
+use composition::{CameraPosition, HEIGHT, ImageMode, ImageSettings, Pixels, Scene, Source, WIDTH};
 use eframe::egui::{self, Color32, Rect, TextureHandle, TextureOptions, Vec2, pos2};
 use native_capture::{CaptureSession, CaptureSource, NativeFrame, SourceKind};
 use std::{
@@ -24,6 +26,7 @@ struct Options {
     seconds: f64,
     report: Option<PathBuf>,
     screenshot: Option<PathBuf>,
+    image: Option<PathBuf>,
 }
 
 impl Options {
@@ -54,6 +57,9 @@ impl Options {
                 "--report" => {
                     options.report =
                         Some(args.next().ok_or("Informe o caminho do relatório.")?.into())
+                }
+                "--image" => {
+                    options.image = Some(args.next().ok_or("Informe o caminho da imagem.")?.into());
                 }
                 "--ui-screenshot" => {
                     options.screenshot =
@@ -133,7 +139,17 @@ struct Camera {
     texture: TextureHandle,
 }
 
+struct ImageSource {
+    loaded: image_source::LoadedImage,
+    texture: TextureHandle,
+}
+
 struct Studio {
+    image: Option<ImageSource>,
+    image_settings: ImageSettings,
+    image_receiver: Option<Receiver<Result<Option<image_source::LoadedImage>, String>>>,
+    virtual_camera: Option<virtual_camera::VirtualCamera>,
+    virtual_notice: String,
     desktop: Option<Desktop>,
     camera: Option<Camera>,
     pending_desktop: Option<PendingDesktop>,
@@ -183,6 +199,11 @@ impl Studio {
             .map(|state| state.adapter.get_info().name)
             .unwrap_or_else(|| "GPU".into());
         let mut app = Self {
+            image: None,
+            image_settings: ImageSettings::default(),
+            image_receiver: None,
+            virtual_camera: None,
+            virtual_notice: "Câmera virtual parada.".into(),
             desktop: None,
             camera: None,
             pending_desktop: None,
@@ -220,7 +241,53 @@ impl Studio {
                 Err(error) => app.notice = error,
             }
         }
+        if let Some(path) = app.options.image.clone() {
+            app.load_image(&cc.egui_ctx, Some(path));
+        }
         app
+    }
+
+    fn scene(&self) -> Scene {
+        Scene {
+            desktop: self.desktop.as_ref().map(|s| Pixels {
+                width: s.frame.width,
+                height: s.frame.height,
+                rgba: s.frame.rgba.clone(),
+            }),
+            camera: self.camera.as_ref().map(|s| Pixels {
+                width: s.frame.width,
+                height: s.frame.height,
+                rgba: s.frame.rgba.clone(),
+            }),
+            image: self.image.as_ref().map(|s| s.loaded.pixels.clone()),
+            image_settings: self.image_settings,
+            mirror: self.mirror,
+            camera_size: self.camera_size,
+            camera_position: self.camera_position,
+        }
+    }
+
+    fn open_image(&mut self, ctx: &egui::Context) {
+        self.load_image(ctx, None);
+    }
+
+    fn load_image(&mut self, ctx: &egui::Context, path: Option<PathBuf>) {
+        let (sender, receiver) = mpsc::channel();
+        let context = ctx.clone();
+        std::thread::spawn(move || {
+            let result = path
+                .or_else(|| {
+                    rfd::FileDialog::new()
+                        .set_title("Adicionar imagem")
+                        .add_filter("PNG ou JPEG", &["png", "jpg", "jpeg"])
+                        .pick_file()
+                })
+                .map(|path| image_source::load(&path))
+                .transpose();
+            let _ = sender.send(result);
+            context.request_repaint();
+        });
+        self.image_receiver = Some(receiver);
     }
 
     fn open_picker(&mut self, ctx: &egui::Context, kind: PickerKind) {
@@ -336,6 +403,29 @@ impl Studio {
     }
 
     fn receive_frames(&mut self, ctx: &egui::Context) {
+        if let Some(receiver) = &self.image_receiver
+            && let Ok(result) = receiver.try_recv()
+        {
+            self.image_receiver = None;
+            match result {
+                Ok(Some(loaded)) => {
+                    let p = &loaded.pixels;
+                    let texture = load_texture(ctx, "image", p.width, p.height, &p.rgba);
+                    self.image = Some(ImageSource { loaded, texture });
+                    self.notice = "Imagem carregada.".into();
+                }
+                Ok(None) => self.notice = "Seleção de imagem cancelada.".into(),
+                Err(error) => self.notice = error,
+            }
+        }
+        if let Some(output) = &self.virtual_camera {
+            self.virtual_notice = output.status();
+            if output.finished() {
+                self.virtual_camera = None;
+            }
+            ctx.request_repaint_after(Duration::from_millis(100));
+        }
+
         if let Some(picker) = &mut self.picker
             && let Some(receiver) = &picker.receiver
             && let Ok(result) = receiver.try_recv()
@@ -482,6 +572,7 @@ impl Studio {
         }
         if self.pending_desktop.is_some()
             || self.pending_camera.is_some()
+            || self.image_receiver.is_some()
             || self.save_receiver.is_some()
             || self
                 .picker
@@ -493,6 +584,11 @@ impl Studio {
     }
 
     fn stop_all(&mut self) {
+        if let Some(output) = &self.virtual_camera {
+            output.stop();
+        }
+        self.image = None;
+        self.image_receiver = None;
         self.cancel_pending();
         self.desktop = None;
         self.camera = None;
@@ -503,32 +599,12 @@ impl Studio {
     }
 
     fn save_snapshot(&mut self, ctx: &egui::Context) {
-        let base = self.desktop.as_ref().map(|source| {
-            (
-                source.frame.width,
-                source.frame.height,
-                source.frame.rgba.clone(),
-            )
-        });
-        let camera = self.camera.as_ref().map(|source| {
-            (
-                source.frame.width,
-                source.frame.height,
-                source.frame.rgba.clone(),
-            )
-        });
-        let (mirror, size, position) = (self.mirror, self.camera_size, self.camera_position);
+        let scene = self.scene();
         let (sender, receiver) = mpsc::channel();
         let context = ctx.clone();
         std::thread::spawn(move || {
             let result = (|| {
-                let image = compose_snapshot(
-                    base.as_ref().map(|(w, h, p)| (*w, *h, p.as_slice())),
-                    camera.as_ref().map(|(w, h, p)| (*w, *h, p.as_slice())),
-                    mirror,
-                    size,
-                    position,
-                )?;
+                let image = scene.compose()?;
                 let stamp = SystemTime::now()
                     .duration_since(UNIX_EPOCH)
                     .unwrap_or_default()
@@ -618,6 +694,9 @@ impl Studio {
 
     fn benchmark_tick(&mut self, ctx: &egui::Context) {
         if let Some(path) = &self.options.screenshot {
+            if !self.screenshot_requested {
+                ctx.request_repaint_after(Duration::from_millis(100));
+            }
             if !self.screenshot_requested && self.started.elapsed() > Duration::from_secs(3) {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(Default::default()));
                 self.screenshot_requested = true;
@@ -683,27 +762,6 @@ impl Studio {
 fn as_rect(rect: [f32; 4]) -> Rect {
     Rect::from_min_size(pos2(rect[0], rect[1]), Vec2::new(rect[2], rect[3]))
 }
-fn draw_source(
-    painter: &egui::Painter,
-    texture: &TextureHandle,
-    width: u32,
-    height: u32,
-    area: [f32; 4],
-    mirror: bool,
-) {
-    let uv = if mirror {
-        Rect::from_min_max(pos2(1.0, 0.0), pos2(0.0, 1.0))
-    } else {
-        Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0))
-    };
-    painter.image(
-        texture.id(),
-        as_rect(fit_rect(width, height, area)),
-        uv,
-        Color32::WHITE,
-    );
-}
-
 impl eframe::App for Studio {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.receive_frames(ctx);
@@ -711,13 +769,15 @@ impl eframe::App for Studio {
             ui.add_space(8.0);
             ui.horizontal(|ui| {
                 ui.heading("Mini Studio");
-                ui.label("MVP nativo");
+                ui.label("Estúdio nativo");
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label(if self.desktop.is_some() || self.camera.is_some() {
-                        "Capturando"
-                    } else {
-                        "Pronto para capturar"
-                    });
+                    ui.label(
+                        if self.desktop.is_some() || self.camera.is_some() || self.image.is_some() {
+                            "Composição ativa"
+                        } else {
+                            "Pronto para capturar"
+                        },
+                    );
                 });
             });
             ui.add_space(8.0);
@@ -727,113 +787,174 @@ impl eframe::App for Studio {
             .resizable(false)
             .show(ctx, |ui| {
                 ui.add_space(12.0);
-                ui.heading("Fontes de captura");
-                ui.add_space(10.0);
-                for (label, kind) in [
-                    ("Capturar tela", PickerKind::Screen),
-                    ("Capturar janela", PickerKind::Window),
-                    ("Capturar câmera", PickerKind::Camera),
-                ] {
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    ui.heading("Fontes da composição");
+                    ui.add_space(10.0);
+                    for (label, kind) in [
+                        ("Capturar tela", PickerKind::Screen),
+                        ("Capturar janela", PickerKind::Window),
+                        ("Capturar câmera", PickerKind::Camera),
+                    ] {
+                        if ui
+                            .add_sized([ui.available_width(), 36.0], egui::Button::new(label))
+                            .clicked()
+                        {
+                            self.open_picker(ctx, kind);
+                        }
+                    }
                     if ui
-                        .add_sized([ui.available_width(), 36.0], egui::Button::new(label))
+                        .add_enabled(
+                            self.image_receiver.is_none(),
+                            egui::Button::new(if self.image.is_some() {
+                                "Substituir imagem"
+                            } else {
+                                "Adicionar imagem"
+                            }),
+                        )
                         .clicked()
                     {
-                        self.open_picker(ctx, kind);
+                        self.open_image(ctx);
                     }
-                }
-                ui.add_space(14.0);
-                ui.separator();
-                if let Some(desktop) = &self.desktop {
-                    ui.label(&desktop.source.name);
-                    ui.small(if desktop.kind == SourceKind::Screen {
-                        "Tela"
-                    } else {
-                        "Janela"
-                    });
-                    if ui.button("Remover captura").clicked() {
-                        self.desktop = None;
+                    if self.image_receiver.is_some() {
+                        ui.spinner();
                     }
-                    ui.separator();
-                }
-                if let Some(camera) = &self.camera {
-                    ui.label(&camera.device.name);
-                    if ui.button("Remover câmera").clicked() {
-                        self.camera = None;
-                    }
-                    ui.separator();
-                }
-                if self.camera.is_some() {
-                    ui.add_space(12.0);
-                    ui.strong("Ajustes da câmera");
-                    ui.checkbox(&mut self.mirror, "Espelhar câmera");
-                    egui::ComboBox::from_label("Canto")
-                        .selected_text(match self.camera_position {
-                            CameraPosition::BottomRight => "Inferior direito",
-                            CameraPosition::BottomLeft => "Inferior esquerdo",
-                            CameraPosition::TopRight => "Superior direito",
-                            CameraPosition::TopLeft => "Superior esquerdo",
-                        })
-                        .show_ui(ui, |ui| {
-                            for (value, label) in [
-                                (CameraPosition::BottomRight, "Inferior direito"),
-                                (CameraPosition::BottomLeft, "Inferior esquerdo"),
-                                (CameraPosition::TopRight, "Superior direito"),
-                                (CameraPosition::TopLeft, "Superior esquerdo"),
-                            ] {
-                                ui.selectable_value(&mut self.camera_position, value, label);
-                            }
+                    if let Some(image) = &self.image {
+                        ui.label(&image.loaded.name);
+                        ui.checkbox(&mut self.image_settings.visible, "Mostrar imagem");
+                        ui.horizontal(|ui| {
+                            ui.selectable_value(
+                                &mut self.image_settings.mode,
+                                ImageMode::Background,
+                                "Fundo",
+                            );
+                            ui.selectable_value(
+                                &mut self.image_settings.mode,
+                                ImageMode::Overlay,
+                                "Sobreposição",
+                            );
                         });
-                    ui.add(
-                        egui::Slider::new(&mut self.camera_size, 15..=40)
-                            .suffix("%")
-                            .text("Tamanho"),
-                    );
-                }
-                ui.add_space(20.0);
-                ui.small("1 tela ou janela + 1 câmera");
-                ui.small("Sem áudio, gravação ou transmissão neste MVP.");
+                        ui.add(
+                            egui::Slider::new(&mut self.image_settings.size, 5..=100)
+                                .text("Tamanho")
+                                .suffix("%"),
+                        );
+                        ui.add(
+                            egui::Slider::new(&mut self.image_settings.x, 0.0..=1.0)
+                                .text("Horizontal"),
+                        );
+                        ui.add(
+                            egui::Slider::new(&mut self.image_settings.y, 0.0..=1.0)
+                                .text("Vertical"),
+                        );
+                        if ui.button("Centralizar imagem").clicked() {
+                            self.image_settings.x = 0.5;
+                            self.image_settings.y = 0.5;
+                        }
+                        if ui.button("Remover imagem").clicked() {
+                            self.image = None;
+                            self.image_receiver = None;
+                        }
+                    }
+                    ui.add_space(14.0);
+                    ui.separator();
+                    if let Some(desktop) = &self.desktop {
+                        ui.label(&desktop.source.name);
+                        ui.small(if desktop.kind == SourceKind::Screen {
+                            "Tela"
+                        } else {
+                            "Janela"
+                        });
+                        if ui.button("Remover captura").clicked() {
+                            self.desktop = None;
+                        }
+                        ui.separator();
+                    }
+                    if let Some(camera) = &self.camera {
+                        ui.label(&camera.device.name);
+                        if ui.button("Remover câmera").clicked() {
+                            self.camera = None;
+                        }
+                        ui.separator();
+                    }
+                    if self.camera.is_some() {
+                        ui.add_space(12.0);
+                        ui.strong("Ajustes da câmera");
+                        ui.checkbox(&mut self.mirror, "Espelhar câmera");
+                        egui::ComboBox::from_label("Canto")
+                            .selected_text(match self.camera_position {
+                                CameraPosition::BottomRight => "Inferior direito",
+                                CameraPosition::BottomLeft => "Inferior esquerdo",
+                                CameraPosition::TopRight => "Superior direito",
+                                CameraPosition::TopLeft => "Superior esquerdo",
+                            })
+                            .show_ui(ui, |ui| {
+                                for (value, label) in [
+                                    (CameraPosition::BottomRight, "Inferior direito"),
+                                    (CameraPosition::BottomLeft, "Inferior esquerdo"),
+                                    (CameraPosition::TopRight, "Superior direito"),
+                                    (CameraPosition::TopLeft, "Superior esquerdo"),
+                                ] {
+                                    ui.selectable_value(&mut self.camera_position, value, label);
+                                }
+                            });
+                        ui.add(
+                            egui::Slider::new(&mut self.camera_size, 15..=40)
+                                .suffix("%")
+                                .text("Tamanho"),
+                        );
+                    }
+                    ui.add_space(20.0);
+                    ui.small("1 tela ou janela + 1 imagem + 1 câmera");
+                    ui.small("Sem áudio, gravação ou transmissão.");
+                });
             });
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.heading("Prévia ao vivo");
             ui.add_space(8.0);
             let width = ui
                 .available_width()
-                .min((ui.available_height() - 130.0).max(180.0) * 16.0 / 9.0);
+                .min((ui.available_height() - 220.0).max(180.0) * 16.0 / 9.0);
             let (rect, _) =
                 ui.allocate_exact_size(Vec2::new(width, width * 9.0 / 16.0), egui::Sense::hover());
             let painter = ui.painter_at(rect);
-            painter.rect_filled(rect, 0.0, Color32::from_rgb(8, 11, 16));
-            let area = [rect.left(), rect.top(), rect.width(), rect.height()];
-            if let Some(desktop) = &self.desktop {
-                draw_source(
-                    &painter,
-                    &desktop.texture,
-                    desktop.frame.width,
-                    desktop.frame.height,
-                    area,
-                    false,
-                );
-            }
-            if let Some(camera) = &self.camera {
-                let camera_area = if self.desktop.is_some() {
-                    camera_rect(self.camera_size, self.camera_position, area)
-                } else {
-                    area
+            for layer in self.scene().layers() {
+                let [x, y, w, h] = layer.rect;
+                let area = as_rect([
+                    rect.left() + x * rect.width() / WIDTH as f32,
+                    rect.top() + y * rect.height() / HEIGHT as f32,
+                    w * rect.width() / WIDTH as f32,
+                    h * rect.height() / HEIGHT as f32,
+                ]);
+                let texture = match layer.source {
+                    Some(Source::Desktop) => self.desktop.as_ref().map(|s| &s.texture),
+                    Some(Source::Camera) => self.camera.as_ref().map(|s| &s.texture),
+                    Some(Source::Image) => self.image.as_ref().map(|s| &s.texture),
+                    None => None,
                 };
-                if self.desktop.is_some() {
-                    painter.rect_filled(as_rect(camera_area).expand(1.0), 0.0, Color32::WHITE);
-                    painter.rect_filled(as_rect(camera_area), 0.0, Color32::from_rgb(8, 11, 16));
+                if let Some(texture) = texture {
+                    let uv = if layer.mirror {
+                        Rect::from_min_max(pos2(1.0, 0.0), pos2(0.0, 1.0))
+                    } else {
+                        Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0))
+                    };
+                    painter.image(texture.id(), area, uv, Color32::WHITE);
+                } else {
+                    painter.rect_filled(
+                        area,
+                        0.0,
+                        Color32::from_rgba_unmultiplied(
+                            layer.color[0],
+                            layer.color[1],
+                            layer.color[2],
+                            layer.color[3],
+                        ),
+                    );
                 }
-                draw_source(
-                    &painter,
-                    &camera.texture,
-                    camera.frame.width,
-                    camera.frame.height,
-                    camera_area,
-                    self.mirror,
-                );
             }
-            if self.desktop.is_none() && self.camera.is_none() {
+            if self.desktop.is_none()
+                && self.camera.is_none()
+                && !(self.image.is_some() && self.image_settings.visible)
+            {
                 painter.text(
                     rect.center(),
                     egui::Align2::CENTER_CENTER,
@@ -851,7 +972,7 @@ impl eframe::App for Studio {
                 });
             });
             ui.add_space(12.0);
-            let active = self.desktop.is_some() || self.camera.is_some();
+            let active = self.desktop.is_some() || self.camera.is_some() || self.image.is_some();
             ui.horizontal(|ui| {
                 if ui
                     .add_enabled(
@@ -864,7 +985,11 @@ impl eframe::App for Studio {
                 }
                 if ui
                     .add_enabled(
-                        active || self.pending_desktop.is_some() || self.pending_camera.is_some(),
+                        active
+                            || self.pending_desktop.is_some()
+                            || self.pending_camera.is_some()
+                            || self.image_receiver.is_some()
+                            || self.virtual_camera.is_some(),
                         egui::Button::new("Parar tudo"),
                     )
                     .clicked()
@@ -877,8 +1002,30 @@ impl eframe::App for Studio {
             });
             ui.add_space(10.0);
             ui.label(&self.notice);
+            ui.separator();
+            if let Some(output) = &self.virtual_camera {
+                if ui
+                    .add_enabled(
+                        !output.stopping(),
+                        egui::Button::new("Parar câmera virtual"),
+                    )
+                    .clicked()
+                {
+                    output.stop();
+                }
+            } else if ui.button("Iniciar câmera virtual").clicked() {
+                match virtual_camera::VirtualCamera::start(self.scene(), ctx.clone()) {
+                    Ok(output) => self.virtual_camera = Some(output),
+                    Err(error) => self.virtual_notice = error,
+                }
+            }
+            ui.label(&self.virtual_notice);
+            ui.small("Mini Studio RS Cam · 1280 × 720 · 30 FPS · Windows 11");
         });
         self.draw_picker(ctx);
+        if let Some(output) = &self.virtual_camera {
+            output.update(self.scene());
+        }
         self.benchmark_tick(ctx);
     }
 }

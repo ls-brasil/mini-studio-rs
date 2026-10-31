@@ -1399,6 +1399,8 @@ dependencies = [
  "num-traits",
  "png",
  "tiff",
+ "zune-core",
+ "zune-jpeg",
 ]
 
 [[package]]
@@ -1679,6 +1681,7 @@ dependencies = [
  "eframe",
  "fast_image_resize",
  "image",
+ "libloading",
  "rfd",
  "serde",
  "serde_json",

@@ -25,7 +25,7 @@ pub struct CameraDevice {
 pub struct CameraFrame {
     pub width: u32,
     pub height: u32,
-    pub rgba: Vec<u8>,
+    pub rgba: Arc<[u8]>,
     pub sequence: u64,
 }
 
@@ -212,6 +212,11 @@ pub fn list_cameras() -> Result<Vec<CameraDevice>, String> {
                 .map_err(|e| e.to_string())?,
                 name: device_string(device, &MF_DEVSOURCE_ATTRIBUTE_FRIENDLY_NAME)
                     .map_err(|e| e.to_string())?,
+            })
+        })
+        .filter(|result: &Result<CameraDevice, String>| {
+            result.as_ref().map_or(true, |device| {
+                !device.name.starts_with(crate::virtual_camera::CAMERA_NAME)
             })
         })
         .collect()
@@ -402,7 +407,7 @@ impl IMFSourceReaderCallback_Impl for ReaderCallback_Impl {
                 state.frame = Some(CameraFrame {
                     width: format.width,
                     height: format.height,
-                    rgba,
+                    rgba: rgba.into(),
                     sequence: state.sequence,
                 });
                 state.waker.clone()

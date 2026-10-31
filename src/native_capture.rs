@@ -43,7 +43,7 @@ pub struct NativeFrame {
     pub sequence: u32,
     pub width: u32,
     pub height: u32,
-    pub rgba: Vec<u8>,
+    pub rgba: Arc<[u8]>,
 }
 
 const FRAME_PERIOD: Duration = Duration::from_nanos(1_000_000_000 / 30);
@@ -195,7 +195,7 @@ fn prepare_frame(
         sequence: 0,
         width: out_width,
         height: out_height,
-        rgba: output,
+        rgba: output.into(),
     })
 }
 
@@ -466,7 +466,7 @@ mod tests {
             sequence: 0,
             width,
             height: 1,
-            rgba: vec![0; width as usize * 4],
+            rgba: vec![0; width as usize * 4].into(),
         }
     }
 

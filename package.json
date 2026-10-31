@@ -6,6 +6,7 @@
     "dev": "cargo run",
     "build": "cargo build --release",
     "build:debug": "cargo build",
+    "build:vcam": "powershell -NoProfile -File scripts/build-vcam.ps1",
     "check": "cargo check",
     "test": "cargo test",
     "test:capture": "cargo test benchmark_real_monitor_stream -- --ignored --nocapture",
