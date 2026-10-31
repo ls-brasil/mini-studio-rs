@@ -1,0 +1,26 @@
+#include <windows.h>
+1 VERSIONINFO
+FILEVERSION @MS_VERSION_COMMAS@,0
+PRODUCTVERSION @MS_VERSION_COMMAS@,0
+FILEFLAGSMASK 0x3fL
+FILEFLAGS 0
+FILEOS 0x40004L
+FILETYPE 0x2L
+BEGIN
+ BLOCK "StringFileInfo"
+ BEGIN
+  BLOCK "041604b0"
+  BEGIN
+   VALUE "CompanyName", "LS Brasil\0"
+   VALUE "FileDescription", "Mini Studio Virtual Camera\0"
+   VALUE "FileVersion", "@MS_VERSION@.0\0"
+   VALUE "ProductName", "Mini Studio\0"
+   VALUE "ProductVersion", "@MS_VERSION@\0"
+   VALUE "OriginalFilename", "MiniStudioRSVCam.dll\0"
+  END
+ END
+ BLOCK "VarFileInfo"
+ BEGIN
+  VALUE "Translation", 0x0416, 1200
+ END
+END

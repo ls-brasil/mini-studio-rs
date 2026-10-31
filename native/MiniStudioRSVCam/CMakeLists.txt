@@ -1,5 +1,10 @@
 cmake_minimum_required(VERSION 3.20)
-project(MiniStudioRSVCam LANGUAGES CXX)
+project(MiniStudioRSVCam LANGUAGES CXX RC)
+
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/../../Cargo.toml" MS_VERSION_LINE REGEX "^version =")
+string(REGEX MATCH "[0-9]+\\.[0-9]+\\.[0-9]+" MS_VERSION "${MS_VERSION_LINE}")
+string(REPLACE "." "," MS_VERSION_COMMAS "${MS_VERSION}")
+configure_file(version.rc.in "${CMAKE_CURRENT_BINARY_DIR}/version.rc" @ONLY)
 
 # Media source da câmera virtual "Mini Studio RS Cam".
 # DLL COM in-proc carregada pelo Frame Server do Windows (via MFCreateVirtualCamera).
@@ -10,6 +15,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 add_library(MiniStudioRSVCam SHARED
+    "${CMAKE_CURRENT_BINARY_DIR}/version.rc"
     dllmain.cpp
     MediaSource.cpp
     MediaStream.cpp

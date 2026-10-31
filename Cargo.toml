@@ -1,16 +1,17 @@
 [package]
 name = "mini-studio-rs"
-version = "0.2.0"
+version = "1.0.0"
 edition = "2024"
 rust-version = "1.88"
-description = "Mini Studio nativo: captura de tela, janela e câmera"
+description = "Mini Studio: seu estúdio de composição e câmera virtual"
 authors = ["LS Brasil"]
 
 [dependencies]
-eframe = { version = "0.33.3", default-features = false, features = ["default_fonts", "wgpu"] }
+eframe = { version = "0.33.3", default-features = false, features = ["default_fonts", "wgpu", "accesskit"] }
 wgpu = { version = "27", default-features = false, features = ["dx12", "wgsl", "std"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 libloading = "0.8"
+winreg = "0.56"
 rfd = "0.15"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -31,3 +32,6 @@ opt-level = 3
 lto = "thin"
 codegen-units = 1
 strip = true
+
+[build-dependencies]
+embed-resource = "3.0.12"

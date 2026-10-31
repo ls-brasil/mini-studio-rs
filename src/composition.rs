@@ -3,13 +3,14 @@ use fast_image_resize::{
     images::{Image, ImageRef},
 };
 use image::{Rgba, RgbaImage, imageops};
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 pub const WIDTH: u32 = 1280;
 pub const HEIGHT: u32 = 720;
 pub const BACKGROUND: Rgba<u8> = Rgba([8, 11, 16, 255]);
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CameraPosition {
     BottomRight,
     BottomLeft,
@@ -17,13 +18,14 @@ pub enum CameraPosition {
     TopLeft,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ImageMode {
     Background,
     Overlay,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct ImageSettings {
     pub visible: bool,
     pub mode: ImageMode,

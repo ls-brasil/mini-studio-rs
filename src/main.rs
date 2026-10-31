@@ -4,11 +4,14 @@ mod camera;
 mod composition;
 mod image_source;
 mod native_capture;
+mod preferences;
+mod studio_ui;
+mod theme;
 mod virtual_camera;
 
 use camera::{CameraCapture, CameraDevice, CameraFrame};
-use composition::{CameraPosition, HEIGHT, ImageMode, ImageSettings, Pixels, Scene, Source, WIDTH};
-use eframe::egui::{self, Color32, Rect, TextureHandle, TextureOptions, Vec2, pos2};
+use composition::{CameraPosition, ImageSettings, Pixels, Scene, Source};
+use eframe::egui::{self, TextureHandle, TextureOptions};
 use native_capture::{CaptureSession, CaptureSource, NativeFrame, SourceKind};
 use std::{
     path::PathBuf,
@@ -27,6 +30,9 @@ struct Options {
     report: Option<PathBuf>,
     screenshot: Option<PathBuf>,
     image: Option<PathBuf>,
+    ui_size: Option<[f32; 2]>,
+    ui_exit: bool,
+    ui_dialog: Option<String>,
 }
 
 impl Options {
@@ -60,6 +66,31 @@ impl Options {
                 }
                 "--image" => {
                     options.image = Some(args.next().ok_or("Informe o caminho da imagem.")?.into());
+                }
+                "--ui-exit" => options.ui_exit = true,
+                "--ui-dialog" => {
+                    let dialog = args.next().ok_or("Informe help ou setup.")?;
+                    if !matches!(dialog.as_str(), "help" | "setup") {
+                        return Err("Diálogo inválido: use help ou setup.".into());
+                    }
+                    options.ui_dialog = Some(dialog);
+                }
+                "--ui-size" => {
+                    let size = args.next().ok_or("Informe largura x altura.")?;
+                    let (w, h) = size
+                        .split_once('x')
+                        .ok_or("Use largura x altura, por exemplo 1440x900.")?;
+                    let size = [
+                        w.parse::<f32>().map_err(|_| "Largura inválida.")?,
+                        h.parse::<f32>().map_err(|_| "Altura inválida.")?,
+                    ];
+                    if !size
+                        .iter()
+                        .all(|n| n.is_finite() && (600.0..=4096.0).contains(n))
+                    {
+                        return Err("Tamanho inválido.".into());
+                    }
+                    options.ui_size = Some(size);
                 }
                 "--ui-screenshot" => {
                     options.screenshot =
@@ -108,6 +139,7 @@ struct Picker {
     receiver: Option<Receiver<Result<Vec<Choice>, String>>>,
     choices: Vec<Choice>,
     message: String,
+    search: String,
 }
 
 struct DesktopReady {
@@ -145,6 +177,22 @@ struct ImageSource {
 }
 
 struct Studio {
+    selected: Option<Source>,
+    inspector_tab: bool,
+    desktop_visible: bool,
+    camera_visible: bool,
+    guides: bool,
+    scale: f32,
+    help_open: bool,
+    setup_open: bool,
+    notice_error: bool,
+    notice_seen: String,
+    notice_at: Instant,
+    saved_path: Option<PathBuf>,
+    preferences_at: Instant,
+    saved_preferences: preferences::Preferences,
+    canvas_drag: Option<(Source, f32, f32)>,
+    pending_camera_at: Option<Instant>,
     image: Option<ImageSource>,
     image_settings: ImageSettings,
     image_receiver: Option<Receiver<Result<Option<image_source::LoadedImage>, String>>>,
@@ -192,15 +240,41 @@ fn load_texture(
 
 impl Studio {
     fn new(cc: &eframe::CreationContext<'_>, options: Options) -> Self {
-        cc.egui_ctx.set_visuals(egui::Visuals::dark());
         let adapter = cc
             .wgpu_render_state
             .as_ref()
             .map(|state| state.adapter.get_info().name)
             .unwrap_or_else(|| "GPU".into());
+        Self::initialize(&cc.egui_ctx, adapter, options)
+    }
+
+    fn initialize(ctx: &egui::Context, adapter: String, options: Options) -> Self {
+        theme::configure(ctx);
+        let prefs = if options.screenshot.is_some() || options.benchmark.is_some() {
+            preferences::Preferences::default()
+        } else {
+            preferences::Preferences::load()
+        };
+        ctx.set_zoom_factor(prefs.scale);
         let mut app = Self {
+            selected: None,
+            inspector_tab: false,
+            desktop_visible: true,
+            camera_visible: true,
+            guides: prefs.guides,
+            scale: prefs.scale,
+            help_open: options.ui_dialog.as_deref() == Some("help"),
+            setup_open: options.ui_dialog.as_deref() == Some("setup"),
+            notice_error: false,
+            notice_seen: String::new(),
+            notice_at: Instant::now(),
+            saved_path: None,
+            preferences_at: Instant::now(),
+            saved_preferences: prefs.clone(),
+            canvas_drag: None,
+            pending_camera_at: None,
             image: None,
-            image_settings: ImageSettings::default(),
+            image_settings: prefs.image,
             image_receiver: None,
             virtual_camera: None,
             virtual_notice: "Câmera virtual parada.".into(),
@@ -209,10 +283,10 @@ impl Studio {
             pending_desktop: None,
             pending_camera: None,
             picker: None,
-            notice: "Escolha uma tela, janela ou câmera para começar.".into(),
-            mirror: false,
-            camera_size: 25,
-            camera_position: CameraPosition::BottomRight,
+            notice: String::new(),
+            mirror: prefs.mirror,
+            camera_size: prefs.camera_size,
+            camera_position: prefs.camera_position,
             save_receiver: None,
             fps_at: Instant::now(),
             fps_frames: 0,
@@ -237,28 +311,36 @@ impl Studio {
                     .ok_or_else(|| "Fonte de benchmark não encontrada.".into())
             });
             match result {
-                Ok(source) => app.start_desktop(&cc.egui_ctx, *kind, source),
+                Ok(source) => app.start_desktop(ctx, *kind, source),
                 Err(error) => app.notice = error,
             }
         }
         if let Some(path) = app.options.image.clone() {
-            app.load_image(&cc.egui_ctx, Some(path));
+            app.load_image(ctx, Some(path));
         }
         app
     }
 
     fn scene(&self) -> Scene {
         Scene {
-            desktop: self.desktop.as_ref().map(|s| Pixels {
-                width: s.frame.width,
-                height: s.frame.height,
-                rgba: s.frame.rgba.clone(),
-            }),
-            camera: self.camera.as_ref().map(|s| Pixels {
-                width: s.frame.width,
-                height: s.frame.height,
-                rgba: s.frame.rgba.clone(),
-            }),
+            desktop: self
+                .desktop
+                .as_ref()
+                .filter(|_| self.desktop_visible)
+                .map(|s| Pixels {
+                    width: s.frame.width,
+                    height: s.frame.height,
+                    rgba: s.frame.rgba.clone(),
+                }),
+            camera: self
+                .camera
+                .as_ref()
+                .filter(|_| self.camera_visible)
+                .map(|s| Pixels {
+                    width: s.frame.width,
+                    height: s.frame.height,
+                    rgba: s.frame.rgba.clone(),
+                }),
             image: self.image.as_ref().map(|s| s.loaded.pixels.clone()),
             image_settings: self.image_settings,
             mirror: self.mirror,
@@ -320,12 +402,14 @@ impl Studio {
             receiver: Some(receiver),
             choices: Vec::new(),
             message: "Procurando fontes…".into(),
+            search: String::new(),
         });
     }
 
     fn cancel_pending(&mut self) {
         self.pending_desktop = None;
         self.pending_camera = None;
+        self.pending_camera_at = None;
     }
 
     fn start_desktop(&mut self, ctx: &egui::Context, kind: SourceKind, source: CaptureSource) {
@@ -371,6 +455,7 @@ impl Studio {
                 let wake = ctx.clone();
                 capture.set_waker(Arc::new(move || wake.request_repaint()));
                 self.pending_camera = Some((device, capture));
+                self.pending_camera_at = Some(Instant::now());
                 if let Some(picker) = &mut self.picker {
                     picker.message = "Abrindo câmera…".into();
                 }
@@ -380,6 +465,7 @@ impl Studio {
     }
 
     fn show_error(&mut self, error: String) {
+        self.notice_error = true;
         self.notice = error.clone();
         if let Some(picker) = &mut self.picker {
             picker.message = error;
@@ -407,15 +493,23 @@ impl Studio {
             && let Ok(result) = receiver.try_recv()
         {
             self.image_receiver = None;
+            self.notice_at = Instant::now();
             match result {
                 Ok(Some(loaded)) => {
                     let p = &loaded.pixels;
                     let texture = load_texture(ctx, "image", p.width, p.height, &p.rgba);
                     self.image = Some(ImageSource { loaded, texture });
+                    self.image_settings.visible = true;
+                    self.selected = Some(Source::Image);
+                    self.inspector_tab = true;
+                    self.notice_error = false;
                     self.notice = "Imagem carregada.".into();
                 }
-                Ok(None) => self.notice = "Seleção de imagem cancelada.".into(),
-                Err(error) => self.notice = error,
+                Ok(None) => {
+                    self.notice_error = false;
+                    self.notice = "Seleção de imagem cancelada.".into();
+                }
+                Err(error) => self.show_error(error),
             }
         }
         if let Some(output) = &self.virtual_camera {
@@ -465,11 +559,24 @@ impl Studio {
                         texture,
                     });
                     self.picker = None;
-                    self.notice = "Fonte conectada. Prévia nativa com alvo de 30 FPS.".into();
+                    self.selected = Some(Source::Desktop);
+                    self.inspector_tab = true;
+                    self.desktop_visible = true;
+                    self.notice_error = false;
+                    self.notice = "Captura adicionada à composição.".into();
                     self.count_frame();
                 }
                 Err(error) => self.show_error(error),
             }
+        }
+        if self
+            .pending_camera_at
+            .is_some_and(|at| at.elapsed() > Duration::from_secs(12))
+            && self.pending_camera.is_some()
+        {
+            self.pending_camera = None;
+            self.pending_camera_at = None;
+            self.show_error("A câmera não respondeu. Feche outros aplicativos que possam estar usando o dispositivo e tente novamente.".into());
         }
         let pending_result = self
             .pending_camera
@@ -487,7 +594,12 @@ impl Studio {
                         texture,
                     });
                     self.picker = None;
-                    self.notice = "Câmera conectada.".into();
+                    self.selected = Some(Source::Camera);
+                    self.inspector_tab = true;
+                    self.camera_visible = true;
+                    self.notice_error = false;
+                    self.pending_camera_at = None;
+                    self.notice = "Câmera adicionada à composição.".into();
                     if self.desktop.is_none() {
                         self.count_frame();
                     }
@@ -523,7 +635,7 @@ impl Studio {
             }
             Some(Err(error)) => {
                 self.desktop = None;
-                self.notice = error;
+                self.show_error(error);
             }
             _ => {}
         }
@@ -548,7 +660,7 @@ impl Studio {
             }
             Some(Err(error)) => {
                 self.camera = None;
-                self.notice = error;
+                self.show_error(error);
             }
             _ => {}
         }
@@ -556,11 +668,16 @@ impl Studio {
             && let Ok(result) = receiver.try_recv()
         {
             self.save_receiver = None;
-            self.notice = match result {
-                Ok(Some(path)) => format!("Imagem salva em {path}"),
-                Ok(None) => "Salvamento cancelado.".into(),
-                Err(error) => error,
-            };
+            self.notice_at = Instant::now();
+            self.notice_error = false;
+            match result {
+                Ok(Some(path)) => {
+                    self.saved_path = Some(path.into());
+                    self.notice = "Sua composição foi salva.".into();
+                }
+                Ok(None) => self.notice = "Salvamento cancelado.".into(),
+                Err(error) => self.show_error(format!("Não foi possível salvar: {error}")),
+            }
         }
         if self.fps_at.elapsed() >= Duration::from_secs(1) {
             self.fps = self.fps_frames as f64 / self.fps_at.elapsed().as_secs_f64();
@@ -595,7 +712,9 @@ impl Studio {
         self.picker = None;
         self.fps = 0.0;
         self.fps_frames = 0;
-        self.notice = "Todas as capturas foram encerradas.".into();
+        self.selected = None;
+        self.notice_error = false;
+        self.notice = "Composição limpa. Todos os dispositivos foram liberados.".into();
     }
 
     fn save_snapshot(&mut self, ctx: &egui::Context) {
@@ -628,70 +747,6 @@ impl Studio {
         self.save_receiver = Some(receiver);
     }
 
-    fn draw_picker(&mut self, ctx: &egui::Context) {
-        let busy = self.pending_desktop.is_some() || self.pending_camera.is_some();
-        let mut selected = None;
-        let mut open = true;
-        let mut refresh = None;
-        if let Some(picker) = &mut self.picker {
-            let title = match picker.kind {
-                PickerKind::Screen => "Selecionar tela",
-                PickerKind::Window => "Selecionar janela",
-                PickerKind::Camera => "Selecionar câmera",
-            };
-            egui::Window::new(title)
-                .open(&mut open)
-                .collapsible(false)
-                .default_width(540.0)
-                .show(ctx, |ui| {
-                    ui.label(&picker.message);
-                    ui.add_space(8.0);
-                    if busy || picker.receiver.is_some() {
-                        ui.spinner();
-                    }
-                    egui::ScrollArea::vertical()
-                        .max_height(380.0)
-                        .show(ui, |ui| {
-                            for choice in &picker.choices {
-                                let text = format!("{}\n{}", choice.name(), choice.detail());
-                                if ui
-                                    .add_enabled(
-                                        !busy,
-                                        egui::Button::new(text)
-                                            .min_size(Vec2::new(ui.available_width(), 48.0)),
-                                    )
-                                    .clicked()
-                                {
-                                    selected = Some(choice.clone());
-                                }
-                            }
-                        });
-                    ui.add_space(10.0);
-                    if ui
-                        .add_enabled(
-                            !busy && picker.receiver.is_none(),
-                            egui::Button::new("Atualizar lista"),
-                        )
-                        .clicked()
-                    {
-                        refresh = Some(picker.kind);
-                    }
-                });
-        }
-        if !open {
-            self.picker = None;
-            self.cancel_pending();
-        }
-        if let Some(kind) = refresh {
-            self.open_picker(ctx, kind);
-        }
-        match selected {
-            Some(Choice::Desktop(kind, source)) => self.start_desktop(ctx, kind, source),
-            Some(Choice::Camera(device)) => self.start_camera(ctx, device),
-            None => {}
-        }
-    }
-
     fn benchmark_tick(&mut self, ctx: &egui::Context) {
         if let Some(path) = &self.options.screenshot {
             if !self.screenshot_requested {
@@ -701,6 +756,7 @@ impl Studio {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(Default::default()));
                 self.screenshot_requested = true;
             }
+            let mut close = false;
             ctx.input(|input| {
                 for event in &input.events {
                     if let egui::Event::Screenshot { image, .. } = event {
@@ -709,7 +765,7 @@ impl Studio {
                             .iter()
                             .flat_map(|pixel| pixel.to_array())
                             .collect();
-                        let _ = image::save_buffer_with_format(
+                        let result = image::save_buffer_with_format(
                             path,
                             &bytes,
                             image.width() as u32,
@@ -717,9 +773,15 @@ impl Studio {
                             image::ColorType::Rgba8,
                             image::ImageFormat::Png,
                         );
+                        if result.is_ok() && self.options.ui_exit {
+                            close = true;
+                        }
                     }
                 }
             });
+            if close {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
         }
         if self.options.benchmark.is_none() {
             return;
@@ -759,283 +821,27 @@ impl Studio {
     }
 }
 
-fn as_rect(rect: [f32; 4]) -> Rect {
-    Rect::from_min_size(pos2(rect[0], rect[1]), Vec2::new(rect[2], rect[3]))
-}
-impl eframe::App for Studio {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        self.receive_frames(ctx);
-        egui::TopBottomPanel::top("header").show(ctx, |ui| {
-            ui.add_space(8.0);
-            ui.horizontal(|ui| {
-                ui.heading("Mini Studio");
-                ui.label("Estúdio nativo");
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label(
-                        if self.desktop.is_some() || self.camera.is_some() || self.image.is_some() {
-                            "Composição ativa"
-                        } else {
-                            "Pronto para capturar"
-                        },
-                    );
-                });
-            });
-            ui.add_space(8.0);
-        });
-        egui::SidePanel::left("sources")
-            .exact_width(250.0)
-            .resizable(false)
-            .show(ctx, |ui| {
-                ui.add_space(12.0);
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    ui.heading("Fontes da composição");
-                    ui.add_space(10.0);
-                    for (label, kind) in [
-                        ("Capturar tela", PickerKind::Screen),
-                        ("Capturar janela", PickerKind::Window),
-                        ("Capturar câmera", PickerKind::Camera),
-                    ] {
-                        if ui
-                            .add_sized([ui.available_width(), 36.0], egui::Button::new(label))
-                            .clicked()
-                        {
-                            self.open_picker(ctx, kind);
-                        }
-                    }
-                    if ui
-                        .add_enabled(
-                            self.image_receiver.is_none(),
-                            egui::Button::new(if self.image.is_some() {
-                                "Substituir imagem"
-                            } else {
-                                "Adicionar imagem"
-                            }),
-                        )
-                        .clicked()
-                    {
-                        self.open_image(ctx);
-                    }
-                    if self.image_receiver.is_some() {
-                        ui.spinner();
-                    }
-                    if let Some(image) = &self.image {
-                        ui.label(&image.loaded.name);
-                        ui.checkbox(&mut self.image_settings.visible, "Mostrar imagem");
-                        ui.horizontal(|ui| {
-                            ui.selectable_value(
-                                &mut self.image_settings.mode,
-                                ImageMode::Background,
-                                "Fundo",
-                            );
-                            ui.selectable_value(
-                                &mut self.image_settings.mode,
-                                ImageMode::Overlay,
-                                "Sobreposição",
-                            );
-                        });
-                        ui.add(
-                            egui::Slider::new(&mut self.image_settings.size, 5..=100)
-                                .text("Tamanho")
-                                .suffix("%"),
-                        );
-                        ui.add(
-                            egui::Slider::new(&mut self.image_settings.x, 0.0..=1.0)
-                                .text("Horizontal"),
-                        );
-                        ui.add(
-                            egui::Slider::new(&mut self.image_settings.y, 0.0..=1.0)
-                                .text("Vertical"),
-                        );
-                        if ui.button("Centralizar imagem").clicked() {
-                            self.image_settings.x = 0.5;
-                            self.image_settings.y = 0.5;
-                        }
-                        if ui.button("Remover imagem").clicked() {
-                            self.image = None;
-                            self.image_receiver = None;
-                        }
-                    }
-                    ui.add_space(14.0);
-                    ui.separator();
-                    if let Some(desktop) = &self.desktop {
-                        ui.label(&desktop.source.name);
-                        ui.small(if desktop.kind == SourceKind::Screen {
-                            "Tela"
-                        } else {
-                            "Janela"
-                        });
-                        if ui.button("Remover captura").clicked() {
-                            self.desktop = None;
-                        }
-                        ui.separator();
-                    }
-                    if let Some(camera) = &self.camera {
-                        ui.label(&camera.device.name);
-                        if ui.button("Remover câmera").clicked() {
-                            self.camera = None;
-                        }
-                        ui.separator();
-                    }
-                    if self.camera.is_some() {
-                        ui.add_space(12.0);
-                        ui.strong("Ajustes da câmera");
-                        ui.checkbox(&mut self.mirror, "Espelhar câmera");
-                        egui::ComboBox::from_label("Canto")
-                            .selected_text(match self.camera_position {
-                                CameraPosition::BottomRight => "Inferior direito",
-                                CameraPosition::BottomLeft => "Inferior esquerdo",
-                                CameraPosition::TopRight => "Superior direito",
-                                CameraPosition::TopLeft => "Superior esquerdo",
-                            })
-                            .show_ui(ui, |ui| {
-                                for (value, label) in [
-                                    (CameraPosition::BottomRight, "Inferior direito"),
-                                    (CameraPosition::BottomLeft, "Inferior esquerdo"),
-                                    (CameraPosition::TopRight, "Superior direito"),
-                                    (CameraPosition::TopLeft, "Superior esquerdo"),
-                                ] {
-                                    ui.selectable_value(&mut self.camera_position, value, label);
-                                }
-                            });
-                        ui.add(
-                            egui::Slider::new(&mut self.camera_size, 15..=40)
-                                .suffix("%")
-                                .text("Tamanho"),
-                        );
-                    }
-                    ui.add_space(20.0);
-                    ui.small("1 tela ou janela + 1 imagem + 1 câmera");
-                    ui.small("Sem áudio, gravação ou transmissão.");
-                });
-            });
-        egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading("Prévia ao vivo");
-            ui.add_space(8.0);
-            let width = ui
-                .available_width()
-                .min((ui.available_height() - 220.0).max(180.0) * 16.0 / 9.0);
-            let (rect, _) =
-                ui.allocate_exact_size(Vec2::new(width, width * 9.0 / 16.0), egui::Sense::hover());
-            let painter = ui.painter_at(rect);
-            for layer in self.scene().layers() {
-                let [x, y, w, h] = layer.rect;
-                let area = as_rect([
-                    rect.left() + x * rect.width() / WIDTH as f32,
-                    rect.top() + y * rect.height() / HEIGHT as f32,
-                    w * rect.width() / WIDTH as f32,
-                    h * rect.height() / HEIGHT as f32,
-                ]);
-                let texture = match layer.source {
-                    Some(Source::Desktop) => self.desktop.as_ref().map(|s| &s.texture),
-                    Some(Source::Camera) => self.camera.as_ref().map(|s| &s.texture),
-                    Some(Source::Image) => self.image.as_ref().map(|s| &s.texture),
-                    None => None,
-                };
-                if let Some(texture) = texture {
-                    let uv = if layer.mirror {
-                        Rect::from_min_max(pos2(1.0, 0.0), pos2(0.0, 1.0))
-                    } else {
-                        Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0))
-                    };
-                    painter.image(texture.id(), area, uv, Color32::WHITE);
-                } else {
-                    painter.rect_filled(
-                        area,
-                        0.0,
-                        Color32::from_rgba_unmultiplied(
-                            layer.color[0],
-                            layer.color[1],
-                            layer.color[2],
-                            layer.color[3],
-                        ),
-                    );
-                }
-            }
-            if self.desktop.is_none()
-                && self.camera.is_none()
-                && !(self.image.is_some() && self.image_settings.visible)
-            {
-                painter.text(
-                    rect.center(),
-                    egui::Align2::CENTER_CENTER,
-                    "Escolha uma fonte para iniciar a prévia",
-                    egui::FontId::proportional(18.0),
-                    Color32::GRAY,
-                );
-            }
-            ui.horizontal(|ui| {
-                ui.small("1280 × 720 · GPU");
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label(format!("{:.0} FPS", self.fps)).on_hover_text(
-                        "Quadros novos exibidos. Uma fonte parada pode enviar menos quadros.",
-                    );
-                });
-            });
-            ui.add_space(12.0);
-            let active = self.desktop.is_some() || self.camera.is_some() || self.image.is_some();
-            ui.horizontal(|ui| {
-                if ui
-                    .add_enabled(
-                        active && self.save_receiver.is_none(),
-                        egui::Button::new("Salvar imagem PNG"),
-                    )
-                    .clicked()
-                {
-                    self.save_snapshot(ctx);
-                }
-                if ui
-                    .add_enabled(
-                        active
-                            || self.pending_desktop.is_some()
-                            || self.pending_camera.is_some()
-                            || self.image_receiver.is_some()
-                            || self.virtual_camera.is_some(),
-                        egui::Button::new("Parar tudo"),
-                    )
-                    .clicked()
-                {
-                    self.stop_all();
-                }
-                if self.save_receiver.is_some() {
-                    ui.spinner();
-                }
-            });
-            ui.add_space(10.0);
-            ui.label(&self.notice);
-            ui.separator();
-            if let Some(output) = &self.virtual_camera {
-                if ui
-                    .add_enabled(
-                        !output.stopping(),
-                        egui::Button::new("Parar câmera virtual"),
-                    )
-                    .clicked()
-                {
-                    output.stop();
-                }
-            } else if ui.button("Iniciar câmera virtual").clicked() {
-                match virtual_camera::VirtualCamera::start(self.scene(), ctx.clone()) {
-                    Ok(output) => self.virtual_camera = Some(output),
-                    Err(error) => self.virtual_notice = error,
-                }
-            }
-            ui.label(&self.virtual_notice);
-            ui.small("Mini Studio RS Cam · 1280 × 720 · 30 FPS · Windows 11");
-        });
-        self.draw_picker(ctx);
-        if let Some(output) = &self.virtual_camera {
-            output.update(self.scene());
-        }
-        self.benchmark_tick(ctx);
+fn main() {
+    if let Err(error) = run() {
+        eprintln!("{error}");
+        rfd::MessageDialog::new()
+            .set_title("Mini Studio — não foi possível iniciar")
+            .set_description(format!("Confira se o Windows e o driver de vídeo estão atualizados. O Mini Studio precisa de uma GPU compatível com Direct3D 12.\n\nDetalhes: {error}"))
+            .set_level(rfd::MessageLevel::Error)
+            .show();
+        std::process::exit(1);
     }
 }
 
-fn main() -> eframe::Result {
+fn run() -> eframe::Result {
     let options = Options::parse().map_err(|error| eframe::Error::AppCreation(error.into()))?;
+    let window_size = options.ui_size.unwrap_or([1440.0, 900.0]);
     let mut native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1200.0, 800.0])
-            .with_min_inner_size([900.0, 650.0]),
+            .with_inner_size(window_size)
+            .with_min_inner_size([1024.0, 720.0])
+            .with_icon(theme::app_icon())
+            .with_app_id("br.lsbrasil.ministudio"),
         renderer: eframe::Renderer::Wgpu,
         ..Default::default()
     };

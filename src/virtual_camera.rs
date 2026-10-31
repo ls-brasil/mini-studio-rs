@@ -20,6 +20,7 @@ pub struct VirtualCamera {
     status: Arc<Mutex<String>>,
     stopped: Arc<AtomicBool>,
     worker: Option<JoinHandle<()>>,
+    active: Arc<AtomicBool>,
 }
 
 impl VirtualCamera {
@@ -27,12 +28,21 @@ impl VirtualCamera {
         let scene = Arc::new(Mutex::new(Arc::new(scene)));
         let status = Arc::new(Mutex::new("Inicializando câmera virtual…".to_string()));
         let stopped = Arc::new(AtomicBool::new(false));
+        let active = Arc::new(AtomicBool::new(false));
+        let worker_active = active.clone();
         let (worker_scene, worker_status, worker_stop) =
             (scene.clone(), status.clone(), stopped.clone());
         let worker = thread::Builder::new()
             .name("mini-studio-virtual-camera".into())
             .spawn(move || {
-                let result = run(worker_scene, worker_status.clone(), &worker_stop, &ctx);
+                let result = run(
+                    worker_scene,
+                    worker_status.clone(),
+                    &worker_stop,
+                    &worker_active,
+                    &ctx,
+                );
+                worker_active.store(false, Ordering::Release);
                 *worker_status.lock().unwrap_or_else(|e| e.into_inner()) = match result {
                     Ok(()) => "Câmera virtual parada.".into(),
                     Err(error) => format!("Câmera virtual indisponível: {error}"),
@@ -45,6 +55,7 @@ impl VirtualCamera {
             status,
             stopped,
             worker: Some(worker),
+            active,
         })
     }
     pub fn update(&self, scene: Scene) {
@@ -61,6 +72,9 @@ impl VirtualCamera {
     }
     pub fn finished(&self) -> bool {
         self.worker.as_ref().is_none_or(JoinHandle::is_finished)
+    }
+    pub fn active(&self) -> bool {
+        self.active.load(Ordering::Acquire) && !self.stopping()
     }
     pub fn stopping(&self) -> bool {
         self.stopped.load(Ordering::Acquire)
@@ -94,16 +108,31 @@ struct Session {
     publish: Publish,
     stop: Stop,
 }
+pub fn installed() -> bool {
+    installed_path().is_some_and(|p| p.is_file())
+}
+fn installed_path() -> Option<PathBuf> {
+    use winreg::{
+        RegKey,
+        enums::{HKEY_LOCAL_MACHINE, KEY_READ, KEY_WOW64_64KEY},
+    };
+    RegKey::predef(HKEY_LOCAL_MACHINE)
+        .open_subkey_with_flags(
+            r"SOFTWARE\Classes\CLSID\{F0C418C8-9211-479E-BAAE-3CBF90F15D37}\InprocServer32",
+            KEY_READ | KEY_WOW64_64KEY,
+        )
+        .ok()?
+        .get_value::<String, _>("")
+        .ok()
+        .map(PathBuf::from)
+}
+
 impl Session {
     fn open() -> Result<Self, String> {
-        let base = std::env::var_os("ProgramW6432")
-            .or_else(|| std::env::var_os("ProgramFiles"))
-            .ok_or("Pasta Program Files não encontrada.")?;
-        let path = PathBuf::from(base)
-            .join("MiniStudioRS")
-            .join("MiniStudioRSVCam.dll");
+        let path =
+            installed_path().ok_or("Não foi possível localizar a instalação da câmera virtual.")?;
         unsafe {
-            let library=Library::new(&path).map_err(|e|format!("Requer Windows 11 e o componente instalado. Execute scripts/install-vcam.ps1 como administrador. {e}"))?;
+            let library=Library::new(&path).map_err(|e|format!("Não foi possível carregar o componente. Repare a instalação do Mini Studio e verifique se o Windows é a versão 11. {e}"))?;
             let start: Start = *library
                 .get(b"MSVCam_StartSession\0")
                 .map_err(|e| e.to_string())?;
@@ -157,6 +186,7 @@ fn run(
     scene: Arc<Mutex<Arc<Scene>>>,
     status: Arc<Mutex<String>>,
     stopped: &AtomicBool,
+    active: &AtomicBool,
     ctx: &egui::Context,
 ) -> Result<(), String> {
     unsafe {
@@ -189,6 +219,10 @@ fn run(
             last = Some(current);
         }
         session.publish(&nv12)?;
+        if !active.swap(true, Ordering::AcqRel) {
+            *status.lock().unwrap_or_else(|e| e.into_inner()) = "Publicando sua composição.".into();
+            ctx.request_repaint();
+        }
         frames += 1;
         if stats_at.elapsed() >= Duration::from_secs(1) {
             *status.lock().unwrap_or_else(|e| e.into_inner()) = format!(
@@ -252,6 +286,240 @@ fn rgba_to_nv12(rgba: &[u8], width: usize, height: usize, out: &mut [u8]) -> Res
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    #[ignore = "Requer componente instalado e FFmpeg; testa consumidor DirectShow em processo separado"]
+    fn installed_virtual_camera_ffmpeg() {
+        use crate::{
+            camera,
+            composition::{CameraPosition, ImageSettings, Pixels},
+        };
+        use std::{
+            os::windows::process::CommandExt,
+            process::{Command, Stdio},
+        };
+        assert!(installed());
+        let scene = Scene {
+            desktop: None,
+            camera: None,
+            image: Some(Pixels {
+                width: 2,
+                height: 2,
+                rgba: [50, 200, 100, 255].repeat(4).into(),
+            }),
+            image_settings: ImageSettings::default(),
+            mirror: false,
+            camera_size: 25,
+            camera_position: CameraPosition::BottomRight,
+        };
+        let output = VirtualCamera::start(scene, egui::Context::default()).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(15);
+        let device = loop {
+            assert!(!output.finished(), "{}", output.status());
+            if let Some(device) = camera::list_all_cameras_for_test()
+                .unwrap()
+                .into_iter()
+                .find(|d| d.name.starts_with(CAMERA_NAME))
+            {
+                break device;
+            }
+            assert!(Instant::now() < deadline);
+            thread::sleep(Duration::from_millis(100));
+        };
+        std::fs::create_dir_all("target/qa").unwrap();
+        let log = std::fs::File::create("target/qa/ffmpeg-vcam.log").unwrap();
+        let mut consumer = Command::new("ffmpeg")
+            .args([
+                "-hide_banner",
+                "-nostdin",
+                "-y",
+                "-f",
+                "dshow",
+                "-i",
+                &format!("video={}", device.name),
+                "-t",
+                "5",
+                "-f",
+                "framemd5",
+                "target/qa/ffmpeg-vcam.framemd5",
+            ])
+            .creation_flags(0x08000000)
+            .stdout(Stdio::null())
+            .stderr(log)
+            .spawn()
+            .expect("FFmpeg indisponível");
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let status = loop {
+            if let Some(status) = consumer.try_wait().unwrap() {
+                break status;
+            }
+            if Instant::now() > deadline {
+                let _ = consumer.kill();
+                let _ = consumer.wait();
+                panic!("O FFmpeg não concluiu em 30 segundos.");
+            }
+            thread::sleep(Duration::from_millis(50));
+        };
+        let log = std::fs::read_to_string("target/qa/ffmpeg-vcam.log").unwrap();
+        assert!(status.success(), "{log}");
+        let frames = std::fs::read_to_string("target/qa/ffmpeg-vcam.framemd5")
+            .unwrap()
+            .lines()
+            .filter(|l| !l.starts_with('#') && !l.trim().is_empty())
+            .count();
+        assert!(frames >= 140, "Somente {frames} quadros recebidos. {log}");
+        println!(
+            "FFmpeg / DirectShow: {frames} quadros recebidos em 5 segundos; saída verificada por framemd5."
+        );
+        drop(output);
+    }
+    #[test]
+    #[ignore = "Requer componente instalado; publica somente quadros sintéticos e consome a câmera virtual real"]
+    fn installed_virtual_camera_round_trip() {
+        use crate::{
+            camera,
+            composition::{CameraPosition, ImageSettings, Pixels},
+        };
+        assert!(
+            installed(),
+            "Instale o componente antes do teste de integração."
+        );
+        let make_scene = |color: [u8; 4]| Scene {
+            desktop: None,
+            camera: None,
+            image: Some(Pixels {
+                width: 2,
+                height: 2,
+                rgba: color.repeat(4).into(),
+            }),
+            image_settings: ImageSettings::default(),
+            mirror: false,
+            camera_size: 25,
+            camera_position: CameraPosition::BottomRight,
+        };
+        let context = egui::Context::default();
+        let output =
+            VirtualCamera::start(make_scene([50, 200, 100, 255]), context.clone()).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(15);
+        let device = loop {
+            assert!(!output.finished(), "{}", output.status());
+            if let Some(device) = camera::list_all_cameras_for_test()
+                .unwrap()
+                .into_iter()
+                .find(|d| d.name.starts_with(CAMERA_NAME))
+            {
+                break device;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "Dispositivo não apareceu: {}",
+                output.status()
+            );
+            thread::sleep(Duration::from_millis(100));
+        };
+        assert!(
+            camera::list_cameras()
+                .unwrap()
+                .iter()
+                .all(|d| !d.name.starts_with(CAMERA_NAME))
+        );
+        println!("Dispositivo registrado: {}", device.name);
+        let capture = camera::CameraCapture::start(device.id).unwrap();
+        let seconds = std::env::var("MINISTUDIO_VCAM_TEST_SECONDS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(10)
+            .clamp(5, 600);
+        let warmup = Instant::now();
+        while capture.latest().unwrap().is_none() {
+            assert!(
+                warmup.elapsed() < Duration::from_secs(15),
+                "Nenhum quadro após a ativação."
+            );
+            thread::sleep(Duration::from_millis(5));
+        }
+        println!(
+            "Primeiro quadro após {:.2}s; iniciando medição de cadência.",
+            warmup.elapsed().as_secs_f64()
+        );
+        let start = Instant::now();
+        let mut frames = 0u64;
+        let mut last_frame = Instant::now();
+        let mut last_report = Instant::now();
+        let mut green = false;
+        let mut blue = false;
+        let mut last_phase = 0;
+        while start.elapsed() < Duration::from_secs(seconds) {
+            assert!(!output.finished(), "{}", output.status());
+            let phase = (start.elapsed().as_secs() / 2) % 2;
+            if phase != last_phase {
+                output.update(make_scene(if phase == 0 {
+                    [50, 200, 100, 255]
+                } else {
+                    [70, 110, 220, 255]
+                }));
+                last_phase = phase;
+            }
+            if let Some(frame) = capture.latest().unwrap() {
+                assert_eq!((frame.width, frame.height), (1280, 720));
+                let index = ((frame.height / 2 * frame.width + frame.width / 2) * 4) as usize;
+                let rgb = &frame.rgba[index..index + 3];
+                green |= rgb[1] > 170 && rgb[0] < 90;
+                blue |= rgb[2] > 190 && rgb[0] < 110;
+                frames += 1;
+                last_frame = Instant::now();
+            }
+            assert!(
+                last_frame.elapsed() < Duration::from_secs(12),
+                "A câmera virtual deixou de entregar quadros."
+            );
+            if last_report.elapsed() > Duration::from_secs(10) {
+                println!(
+                    "{} s: {} quadros; {:.2} FPS recebidos; {}",
+                    start.elapsed().as_secs(),
+                    frames,
+                    frames as f64 / start.elapsed().as_secs_f64(),
+                    output.status()
+                );
+                last_report = Instant::now();
+            }
+            thread::sleep(Duration::from_millis(2));
+        }
+        assert!(
+            green && blue,
+            "A mudança da composição não chegou ao consumidor."
+        );
+        let fps = frames as f64 / start.elapsed().as_secs_f64();
+        assert!(
+            fps > 24.0,
+            "Cadência insuficiente: {fps:.2} FPS; {}",
+            output.status()
+        );
+        drop(capture);
+        drop(output);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while camera::list_all_cameras_for_test()
+            .unwrap()
+            .iter()
+            .any(|d| d.name.starts_with(CAMERA_NAME))
+        {
+            assert!(
+                Instant::now() < deadline,
+                "Dispositivo permaneceu enumerável após parar."
+            );
+            thread::sleep(Duration::from_millis(100));
+        }
+        let restarted = VirtualCamera::start(make_scene([50, 200, 100, 255]), context).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !restarted.active() {
+            assert!(!restarted.finished(), "{}", restarted.status());
+            assert!(Instant::now() < deadline);
+            thread::sleep(Duration::from_millis(50));
+        }
+        drop(restarted);
+        println!(
+            "Integração real: {frames} quadros em {seconds}s, {fps:.2} FPS; cores, troca de conteúdo, filtro, parada e reinício OK."
+        );
+    }
     #[test]
     fn nv12_range_and_chroma() {
         for (rgb, expected) in [

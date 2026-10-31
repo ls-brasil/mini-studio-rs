@@ -199,6 +199,15 @@ fn device_string(device: &IMFActivate, key: &GUID) -> windows::core::Result<Stri
 }
 
 pub fn list_cameras() -> Result<Vec<CameraDevice>, String> {
+    enumerate_cameras(false)
+}
+
+#[cfg(test)]
+pub fn list_all_cameras_for_test() -> Result<Vec<CameraDevice>, String> {
+    enumerate_cameras(true)
+}
+
+fn enumerate_cameras(include_virtual: bool) -> Result<Vec<CameraDevice>, String> {
     let _runtime = MediaFoundation::start()?;
     devices()
         .map_err(|e| e.to_string())?
@@ -216,7 +225,7 @@ pub fn list_cameras() -> Result<Vec<CameraDevice>, String> {
         })
         .filter(|result: &Result<CameraDevice, String>| {
             result.as_ref().map_or(true, |device| {
-                !device.name.starts_with(crate::virtual_camera::CAMERA_NAME)
+                include_virtual || !device.name.starts_with(crate::virtual_camera::CAMERA_NAME)
             })
         })
         .collect()

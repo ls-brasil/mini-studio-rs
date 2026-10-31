@@ -1,0 +1,58 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs" xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
+  <Package Name="Mini Studio" Manufacturer="LS Brasil" Version="$(var.Version)" Language="1046"
+           UpgradeCode="A9A954CC-5572-4580-91A4-3627B236AFA9" Scope="perMachine" InstallerVersion="500">
+    <SummaryInformation Description="Mini Studio — seu estúdio de composição e câmera virtual"/>
+    <MajorUpgrade DowngradeErrorMessage="Uma versão mais recente do Mini Studio já está instalada."/>
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high"/>
+    <Launch Condition="Installed OR (VersionNT64 AND MINI_WINDOWS_BUILD &gt;= 18362)" Message="O Mini Studio requer Windows 10 versão 1903 ou superior, 64 bits."/>
+    <Property Id="MINI_WINDOWS_BUILD" Secure="yes"><RegistrySearch Id="FindMINI_WINDOWS_BUILD" Root="HKLM" Key="SOFTWARE\Microsoft\Windows NT\CurrentVersion" Name="CurrentBuildNumber" Type="raw" Bitness="always64"/></Property>
+    <Property Id="ARPPRODUCTICON" Value="AppIcon.exe"/>
+    <Icon Id="AppIcon.exe" SourceFile="$(var.Repo)\target\release\mini-studio-rs.exe"/>
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="MiniStudioRS">
+        <Component Id="Application" Guid="C8F82982-EAF7-4319-BA10-26E6B171EA70" Bitness="always64">
+          <File Id="AppExe" Source="$(var.Repo)\target\release\mini-studio-rs.exe" KeyPath="yes">
+            <Shortcut Id="StartMenuShortcut" Directory="ProgramMenuFolder" Name="Mini Studio" Advertise="yes" Icon="AppIcon.exe" WorkingDirectory="INSTALLFOLDER"/>
+            <Shortcut Id="DesktopShortcut" Directory="DesktopFolder" Name="Mini Studio" Advertise="yes" Icon="AppIcon.exe" WorkingDirectory="INSTALLFOLDER"/>
+          </File>
+        </Component>
+        <Component Id="ThirdPartyNotices" Guid="BC5FBA11-4BCE-474D-BD08-40EE794C5CD2" Bitness="always64">
+          <File Source="$(var.Repo)\target\Avisos-de-terceiros.txt" KeyPath="yes"/>
+        </Component>
+        <Component Id="Guide" Guid="3FF72EA9-877E-4777-8267-4BCBF7B75368" Bitness="always64">
+          <File Source="$(var.Repo)\docs\Guia-do-usuario.txt" KeyPath="yes"/>
+        </Component>
+        <Component Id="VirtualCamera" Guid="91AE1BC6-FB4A-4379-B6C7-99D91240FA39" Bitness="always64" Condition="MINI_WINDOWS_BUILD &gt;= 22000">
+          <File Id="VCamDll" Source="$(var.Repo)\target\vcam\Release\MiniStudioRSVCam.dll" KeyPath="yes"/>
+          <RegistryKey Root="HKLM" Key="SOFTWARE\Classes\CLSID\{F0C418C8-9211-479E-BAAE-3CBF90F15D37}\InprocServer32">
+            <RegistryValue Type="string" Value="[#VCamDll]"/>
+            <RegistryValue Name="ThreadingModel" Type="string" Value="Both"/>
+          </RegistryKey>
+        </Component>
+      </Directory>
+    </StandardDirectory>
+    <StandardDirectory Id="CommonAppDataFolder">
+      <Directory Id="FrameFolder" Name="MiniStudioRS">
+        <Component Id="FrameTransport" Guid="4B97BDA7-7D7A-47F4-A561-8958D539AD2C" Bitness="always64" Condition="MINI_WINDOWS_BUILD &gt;= 22000">
+          <CreateFolder>
+            <!-- Usuários criam o arquivo; somente seu criador, administradores e serviço o acessam. -->
+            <PermissionEx Sddl="D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FRFX;;;LS)(A;OICIIO;FA;;;CO)(A;;0x1200a2;;;BU)"/>
+          </CreateFolder>
+          <RegistryValue Root="HKLM" Key="Software\LSBrasil\MiniStudio" Name="Version" Value="$(var.Version)" Type="string" KeyPath="yes"/>
+          <RemoveFile Id="DeleteFrameFile" Name="vcam-frames.bin" On="uninstall"/>
+          <RemoveFolder Id="DeleteFrameFolder" On="uninstall"/>
+        </Component>
+      </Directory>
+    </StandardDirectory>
+    <Feature Id="Main" Title="Mini Studio" Level="1">
+      <ComponentRef Id="Application"/><ComponentRef Id="ThirdPartyNotices"/><ComponentRef Id="Guide"/><ComponentRef Id="VirtualCamera"/><ComponentRef Id="FrameTransport"/>
+    </Feature>
+    <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER"/>
+    <UI>
+      <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="InstallDirDlg" Order="5" Condition="NOT Installed"/>
+      <Publish Dialog="InstallDirDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" Order="5" Condition="1"/>
+    </UI>
+    <WixVariable Id="WixUIBannerBmp" Value="$(var.Repo)\assets\installer-banner.bmp"/>
+    <WixVariable Id="WixUIDialogBmp" Value="$(var.Repo)\assets\installer-dialog.bmp"/>
+  </Package>
+</Wix>

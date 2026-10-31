@@ -1,0 +1,3 @@
+[target.x86_64-pc-windows-msvc]
+# Distribuição autônoma: não exige o Visual C++ Redistributable no computador final.
+rustflags = ["-C", "target-feature=+crt-static"]
