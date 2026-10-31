@@ -4,6 +4,7 @@ mod camera;
 mod canvas_editor;
 mod composition;
 mod image_source;
+mod multiview;
 mod native_capture;
 mod preferences;
 mod scene_ui;
@@ -162,6 +163,7 @@ struct Studio {
     image_target: Option<Source>,
     guides: bool,
     scale: f32,
+    multiview_open: bool,
     help_open: bool,
     setup_open: bool,
     notice_error: bool,
@@ -239,6 +241,7 @@ impl Studio {
             image_target: None,
             guides: prefs.guides,
             scale: prefs.scale,
+            multiview_open: false,
             help_open: options.ui_dialog.as_deref() == Some("help"),
             setup_open: options.ui_dialog.as_deref() == Some("setup"),
             notice_error: false,
@@ -315,9 +318,11 @@ impl Studio {
             .find(|s| s.id == id)
     }
     fn scene(&self) -> Scene {
+        self.scene_composition(self.current_scene())
+    }
+    fn scene_composition(&self, saved: &SavedScene) -> Scene {
         Scene {
-            sources: self
-                .current_scene()
+            sources: saved
                 .sources
                 .iter()
                 .filter(|s| s.visible)
@@ -333,7 +338,13 @@ impl Studio {
         }
     }
     fn activate_source(&mut self, ctx: &egui::Context, id: Source) {
-        let Some(source) = self.source(id) else {
+        let Some(source) = self
+            .scenes
+            .scenes
+            .iter()
+            .flat_map(|scene| &scene.sources)
+            .find(|source| source.id == id)
+        else {
             return;
         };
         let input = source.input.clone();
@@ -341,10 +352,6 @@ impl Studio {
             .scenes
             .scenes
             .iter()
-            .filter(|scene| {
-                matches!(input, SourceInput::Camera(_))
-                    || std::ptr::eq(*scene, self.current_scene())
-            })
             .flat_map(|scene| &scene.sources)
             .filter(|s| s.id != id && s.input == input)
             .find_map(|s| {
@@ -594,15 +601,15 @@ impl Studio {
         }
     }
     fn clear_scene_runtime(&mut self) {
-        let cameras: HashSet<_> = self
+        let retained: HashSet<_> = self
             .scenes
             .scenes
             .iter()
             .flat_map(|scene| &scene.sources)
-            .filter(|source| matches!(source.input, SourceInput::Camera(_)))
+            .filter(|source| self.multiview_open || matches!(source.input, SourceInput::Camera(_)))
             .map(|source| source.id)
             .collect();
-        self.runtimes.retain(|id, _| cameras.contains(id));
+        self.runtimes.retain(|id, _| retained.contains(id));
         self.picker = None;
         self.picker_target = None;
         self.image_receiver = None;

@@ -160,6 +160,7 @@ impl Studio {
                         if small_icon(ui, Icon::Help, "Ajuda").clicked() {
                             self.help_open = true;
                         }
+                        ui.toggle_value(&mut self.multiview_open, "Visualização múltipla");
                         badge(
                             ui,
                             if self.virtual_camera.as_ref().is_some_and(|o| o.active()) {
@@ -1326,6 +1327,7 @@ impl Studio {
         self.draw_picker(ctx);
         self.dialogs(ctx);
         self.scene_dialogs(ctx);
+        self.multiview(ctx);
         if let Some(output) = &self.virtual_camera {
             output.update(self.scene());
         }
@@ -1612,6 +1614,32 @@ mod tests {
             }]);
         }
     }
+    #[test]
+    fn multiview_switches_with_one_click_and_releases_extra_sources() {
+        use std::rc::Rc;
+        let mut h = Harness::new(vec2(1440.0, 900.0));
+        let first = h.image("Primeira", [255, 0, 0, 255]);
+        let first_runtime = h.app.runtimes[&first].clone();
+        h.app.scenes.scenes.push(crate::scenes::SavedScene {
+            name: "Segunda".into(),
+            sources: vec![],
+        });
+        h.click("Visualização múltipla");
+        assert!(h.app.multiview_open);
+        h.click("Alternar para Segunda");
+        assert_eq!(h.app.scenes.active, 1);
+        assert!(Rc::ptr_eq(&h.app.runtimes[&first], &first_runtime));
+        let second = h.image("Segunda", [0, 255, 0, 255]);
+        h.click("Alternar para Cena 1");
+        assert_eq!(h.app.scenes.active, 0);
+        assert!(h.app.runtimes.contains_key(&second));
+        h.app.multiview_open = false;
+        h.frame(vec![]);
+        assert!(Rc::ptr_eq(&h.app.runtimes[&first], &first_runtime));
+        assert!(!h.app.runtimes.contains_key(&second));
+        h.app.stop_all();
+    }
+
     #[test]
     fn dock_controls_stay_below_preview_at_both_window_sizes() {
         for size in [vec2(1440.0, 900.0), vec2(1024.0, 720.0)] {

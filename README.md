@@ -24,7 +24,8 @@ A prévia ocupa a parte superior. **Cenas**, **Fontes** e **Controles** ficam em
 
 Cada cena guarda uma lista ordenada de fontes, com nomes, visibilidade, bloqueio e transformação independentes. Não existe mais a restrição de uma fonte por tipo: uma cena pode misturar várias imagens, telas, janelas e câmeras.
 
-- Clique em uma cena para alternar. Suas fontes são abertas e as da cena anterior são liberadas. A câmera virtual continua ligada, se estiver ativa.
+- Clique em uma cena para alternar. A câmera virtual continua ligada, se estiver ativa.
+- **Visualização múltipla**, no topo, abre uma segunda janela redimensionável com prévias ao vivo de todas as cenas. Clique uma vez em qualquer miniatura para trocar a cena da saída; a cena ativa fica destacada. A grade acompanha novas cenas e alterações de composição. Enquanto aberta, mantém as fontes das cenas ativas e compartilha capturas iguais; ao fechar, libera as capturas extras de tela e imagem.
 - **Salvar cena** grava imediatamente. As alterações também são salvas automaticamente e ao fechar o aplicativo. **Salvar imagem** exporta PNG.
 - No menu **•••** de Cenas, renomeie ou duplique. A lixeira exclui a cena selecionada; a última cena é mantida.
 - Para repetir uma fonte na composição, selecione-a e use **+ → Duplicar fonte selecionada** ou **Ctrl+D**. As duas camadas têm ajustes independentes e compartilham a captura do dispositivo.
