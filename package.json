@@ -16,5 +16,5 @@
     "fmt": "cargo fmt",
     "fmt:check": "cargo fmt -- --check"
   },
-  "version": "0.0.1"
+  "version": "1.0.0"
 }
