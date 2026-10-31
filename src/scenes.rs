@@ -4,6 +4,9 @@ use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct DesktopSource {
+    // HWNDs só valem nesta sessão; não devem ser restaurados do disco.
+    #[serde(skip)]
+    pub selected_id: Option<u32>,
     pub window: bool,
     pub name: String,
     pub detail: String,
@@ -19,6 +22,9 @@ impl DesktopSource {
                 && (!self.window
                     || source.detail.split(" · ").next() == self.detail.split(" · ").next())
         });
+        if let Some(id) = self.selected_id {
+            return matches.find(|source| source.id == id);
+        }
         match (matches.next(), matches.next()) {
             (Some(source), None) => Some(source),
             _ => None,
@@ -362,6 +368,7 @@ mod tests {
     fn resized_window_matches_but_ambiguous_windows_do_not() {
         use crate::native_capture::CaptureSource;
         let saved = DesktopSource {
+            selected_id: None,
             window: true,
             name: "Slides".into(),
             detail: "App · 1280 × 720".into(),
@@ -373,5 +380,39 @@ mod tests {
         };
         assert_eq!(saved.resolve(vec![source.clone()]).unwrap().id, 4);
         assert!(saved.resolve(vec![source.clone(), source]).is_none());
+    }
+
+    #[test]
+    fn explicit_window_selection_survives_duplicate_titles_and_resize() {
+        use crate::native_capture::CaptureSource;
+        let saved = DesktopSource {
+            selected_id: Some(20),
+            window: true,
+            name: "JW Library".into(),
+            detail: "Application Frame Host · 894 × 1048".into(),
+        };
+        let first = CaptureSource {
+            id: 10,
+            name: saved.name.clone(),
+            detail: saved.detail.clone(),
+        };
+        let second = CaptureSource {
+            id: 20,
+            detail: "Application Frame Host · 1920 × 1080".into(),
+            ..first.clone()
+        };
+        assert_eq!(
+            saved
+                .resolve(vec![first.clone(), second.clone()])
+                .unwrap()
+                .id,
+            20
+        );
+        // Se a selecionada fechar, não capturar silenciosamente a outra janela.
+        assert!(saved.resolve(vec![first.clone()]).is_none());
+        let restored: DesktopSource =
+            serde_json::from_slice(&serde_json::to_vec(&saved).unwrap()).unwrap();
+        assert_eq!(restored.selected_id, None);
+        assert!(restored.resolve(vec![first, second]).is_none());
     }
 }

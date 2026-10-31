@@ -515,6 +515,46 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "Requer duas janelas do JW Library abertas no desktop"]
+    fn capture_both_jw_windows_by_selected_id() {
+        let sources: Vec<_> = super::list_sources(SourceKind::Window)
+            .unwrap()
+            .into_iter()
+            .filter(|source| source.name == "JW Library")
+            .collect();
+        assert!(sources.len() >= 2, "Abra as duas janelas do JW Library");
+        for source in &sources {
+            let saved = crate::scenes::DesktopSource {
+                selected_id: Some(source.id),
+                window: true,
+                name: source.name.clone(),
+                detail: source.detail.clone(),
+            };
+            let resolved = saved.resolve(sources.clone()).unwrap();
+            assert_eq!(resolved.id, source.id);
+            let session = CaptureSession::start(SourceKind::Window, resolved.id).unwrap();
+            let deadline = Instant::now() + Duration::from_secs(5);
+            let frame = loop {
+                if let Some(frame) = session.read(0).unwrap() {
+                    break frame;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "Janela {} sem imagens",
+                    source.id
+                );
+            };
+            assert!(frame.width > 0 && frame.height > 0);
+            assert_eq!(frame.rgba.len(), (frame.width * frame.height * 4) as usize);
+            eprintln!(
+                "JW HWND={}: {} × {} capturados",
+                source.id, frame.width, frame.height
+            );
+            session.stop();
+        }
+    }
+
+    #[test]
     #[ignore = "Requer desktop interativo; mover conteúdo durante 5 segundos para medir FPS"]
     fn benchmark_real_monitor_stream() {
         let (kind, source_id) = if let Ok(title) = std::env::var("MINI_STUDIO_BENCH_WINDOW") {

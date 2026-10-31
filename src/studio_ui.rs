@@ -1,5 +1,6 @@
 use crate::{
     Choice, PickerKind, Studio,
+    canvas_editor::{self, Drag, Handle},
     composition::{HEIGHT, Source, Transform, WIDTH},
     preferences::Preferences,
     scenes::SourceInput,
@@ -17,6 +18,8 @@ impl Studio {
         !self.current_scene().sources.is_empty()
     }
     fn remove_source(&mut self, id: Source) {
+        self.transform_undo.retain(|(source, _)| *source != id);
+        self.transform_redo.retain(|(source, _)| *source != id);
         self.current_scene_mut().sources.retain(|s| s.id != id);
         self.runtimes.remove(&id);
         if self.selected == Some(id) {
@@ -60,12 +63,54 @@ impl Studio {
         }
     }
     fn fit_source(&mut self, id: Source) {
+        self.remember_transform(id);
         if let Some(source) = self.source_mut(id) {
             source.transform = Transform {
                 mirror: source.transform.mirror,
                 opacity: source.transform.opacity,
+                crop: source.transform.crop,
                 ..Default::default()
             };
+        }
+    }
+    fn remember_transform(&mut self, id: Source) {
+        if let Some(source) = self.source(id) {
+            self.transform_undo.push((id, source.transform));
+            if self.transform_undo.len() > 100 {
+                self.transform_undo.remove(0);
+            }
+            self.transform_redo.clear();
+        }
+    }
+    fn undo_transform(&mut self, redo: bool) {
+        let entry = if redo {
+            self.transform_redo.pop()
+        } else {
+            self.transform_undo.pop()
+        };
+        if let Some((id, previous)) = entry
+            && let Some(source) = self.source_mut(id)
+        {
+            let current = std::mem::replace(&mut source.transform, previous);
+            if redo {
+                self.transform_undo.push((id, current));
+            } else {
+                self.transform_redo.push((id, current));
+            }
+            self.selected = Some(id);
+        }
+    }
+    fn center_source(&mut self, id: Source) {
+        if let Some(layer) = self.scene().layers().iter().find(|l| l.source == Some(id)) {
+            let rect = layer.rect;
+            self.remember_transform(id);
+            if let Some(source) = self.source_mut(id) {
+                source.transform.x = (1.0 - rect[2] / WIDTH as f32) * 0.5;
+                source.transform.y = (1.0 - rect[3] / HEIGHT as f32) * 0.5;
+                source.transform.width = rect[2] / WIDTH as f32;
+                source.transform.height = rect[3] / HEIGHT as f32;
+                source.transform.stretch = true;
+            }
         }
     }
     fn persist_preferences(&mut self) {
@@ -508,7 +553,8 @@ impl Studio {
                         }
                     });
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        ui.label(muted("Arraste para mover · Canto para redimensionar"));
+                        ui.label(muted("Alças: tamanho · Alt: recorte · Shift: livre"))
+                            .on_hover_text("Arraste a fonte para mover. Ctrl desativa o encaixe. Clique direito para mais opções. Ctrl+Z desfaz o enquadramento.");
                     });
                 });
             });
@@ -572,12 +618,20 @@ impl Studio {
                         ui.separator();
                         section(ui, "TAMANHO E POSIÇÃO");
                         ui.label(muted(
-                            "Percentuais da tela. A proporção original da fonte é preservada.",
+                            "Percentuais da tela. Use as alças na prévia para enquadrar com o mouse.",
                         ));
-                        percent(ui, "Horizontal", &mut source.transform.x, 0.0..=1.0);
-                        percent(ui, "Vertical", &mut source.transform.y, 0.0..=1.0);
-                        percent(ui, "Largura", &mut source.transform.width, 0.01..=1.0);
-                        percent(ui, "Altura", &mut source.transform.height, 0.01..=1.0);
+                        percent(ui, "Horizontal", &mut source.transform.x, -1.0..=2.0);
+                        percent(ui, "Vertical", &mut source.transform.y, -1.0..=2.0);
+                        percent(ui, "Largura", &mut source.transform.width, 0.001..=4.0);
+                        percent(ui, "Altura", &mut source.transform.height, 0.001..=4.0);
+                        ui.checkbox(&mut source.transform.stretch, "Usar largura e altura exatas");
+                        ui.collapsing("Recorte da imagem", |ui| {
+                            for (i, label) in ["Esquerda", "Topo", "Direita", "Base"].iter().enumerate() {
+                                let max = 0.99 - source.transform.crop[(i + 2) % 4];
+                                percent(ui, label, &mut source.transform.crop[i], 0.0..=max);
+                            }
+                            if ui.button("Remover recorte").clicked() { source.transform.crop = [0.0; 4]; }
+                        });
                         ui.horizontal(|ui| {
                             let (r, _) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::hover());
                             paint_icon(ui.painter(), Icon::Mirror, r, MUTED);
@@ -659,8 +713,13 @@ impl Studio {
             ],
         );
         let rect = Rect::from_min_size(pos2(fit[0], fit[1]), vec2(fit[2], fit[3]));
-        let response = ui.interact(rect, Id::new("composition_canvas"), Sense::click_and_drag());
-        response.widget_info(|| WidgetInfo::labeled(WidgetType::Image, true, "Prévia da cena"));
+        ui.interact(rect, Id::new("composition_canvas"), Sense::hover())
+            .widget_info(|| WidgetInfo::labeled(WidgetType::Image, true, "Prévia da cena"));
+        let response = ui.interact(
+            outer,
+            Id::new("composition_editor"),
+            Sense::click_and_drag(),
+        );
         let painter = ui.painter_at(rect);
         let scene = self.scene();
         let layers = scene.layers();
@@ -682,11 +741,11 @@ impl Studio {
                 && let Some(runtime) = self.runtimes.get(&id)
                 && let Some(texture) = &runtime.borrow().texture
             {
-                let uv = if layer.mirror {
-                    Rect::from_min_max(pos2(1.0, 0.0), pos2(0.0, 1.0))
-                } else {
-                    Rect::from_min_max(Pos2::ZERO, pos2(1.0, 1.0))
-                };
+                let [left, top, right, bottom] = layer.uv;
+                let uv = Rect::from_min_max(
+                    pos2(if layer.mirror { right } else { left }, top),
+                    pos2(if layer.mirror { left } else { right }, bottom),
+                );
                 painter.image(
                     texture.id(),
                     area,
@@ -763,16 +822,18 @@ impl Studio {
                 );
             }
         }
-        if (response.clicked() || response.drag_started())
+        let modifiers = ctx.input(|i| i.modifiers);
+        if (response.clicked() || response.secondary_clicked() || response.drag_started())
             && let Some(pointer) = ctx
                 .input(|i| i.pointer.press_origin())
                 .or(response.interact_pointer_pos())
         {
-            let resize = self
+            let handle = self
                 .selected
+                .filter(|id| self.source(*id).is_some_and(|s| !s.locked))
                 .and_then(|id| layers.iter().find(|l| l.source == Some(id)))
-                .is_some_and(|l| convert(l.rect).right_bottom().distance(pointer) < 14.0);
-            if !resize {
+                .and_then(|l| canvas_editor::hit_handle(convert(l.rect), pointer));
+            if handle.is_none() {
                 self.selected = layers
                     .iter()
                     .rev()
@@ -785,60 +846,187 @@ impl Studio {
             }
             if response.drag_started()
                 && let Some(id) = self.selected
-                && self.source(id).is_some_and(|s| !s.locked)
+                && let Some(source) = self.source(id).filter(|s| !s.locked)
                 && let Some(layer) = layers.iter().find(|l| l.source == Some(id))
             {
-                let mut transform = Transform::from_rect(layer.rect);
-                transform.mirror = layer.mirror;
-                transform.opacity = layer.opacity;
-                self.canvas_drag = Some((id, transform, resize));
+                let original = source.transform;
+                let mut start = Transform::from_rect(layer.rect);
+                start.mirror = original.mirror;
+                start.opacity = original.opacity;
+                start.crop = original.crop;
+                start.stretch = true;
+                self.canvas_drag = Some(Drag {
+                    id,
+                    original,
+                    start,
+                    handle: handle.unwrap_or(Handle::Move),
+                    crop: modifiers.alt,
+                });
             }
         }
         if response.double_clicked() {
             self.properties = self.selected;
         }
+        let targets: Vec<_> = std::iter::once([0.0, 0.0, 1.0, 1.0])
+            .chain(
+                layers
+                    .iter()
+                    .filter(|l| l.source.is_some() && l.source != self.selected)
+                    .map(|l| {
+                        [
+                            l.rect[0] / WIDTH as f32,
+                            l.rect[1] / HEIGHT as f32,
+                            l.rect[2] / WIDTH as f32,
+                            l.rect[3] / HEIGHT as f32,
+                        ]
+                    }),
+            )
+            .collect();
         if response.dragged()
-            && let Some((id, start, resize)) = self.canvas_drag
+            && let Some(drag) = self.canvas_drag
         {
             let delta = response.total_drag_delta().unwrap_or_default() / rect.size();
-            if let Some(source) = self.source_mut(id)
-                && !source.locked
-            {
-                source.transform = drag_transform(start, [delta.x, delta.y], resize);
+            let mut transformed = drag.apply(delta, modifiers.shift);
+            if drag.handle == Handle::Move && !modifiers.ctrl {
+                canvas_editor::snap_move(&mut transformed, &targets, vec2(7.0, 7.0) / rect.size());
             }
-            ctx.set_cursor_icon(if resize {
-                CursorIcon::ResizeNwSe
-            } else {
+            if let Some(source) = self.source_mut(drag.id).filter(|s| !s.locked) {
+                source.transform = transformed;
+            }
+            ctx.set_cursor_icon(if drag.handle == Handle::Move {
                 CursorIcon::Grabbing
+            } else {
+                drag.handle.cursor()
             });
         }
-        if response.drag_stopped() {
-            self.canvas_drag = None;
+        if response.drag_stopped()
+            && let Some(drag) = self.canvas_drag.take()
+            && self
+                .source(drag.id)
+                .is_some_and(|s| s.transform != drag.original)
+        {
+            self.transform_undo.push((drag.id, drag.original));
+            if self.transform_undo.len() > 100 {
+                self.transform_undo.remove(0);
+            }
+            self.transform_redo.clear();
         }
         if let Some(id) = self.selected
             && let Some(layer) = layers.iter().find(|l| l.source == Some(id))
+            && let Some(source) = self.source(id)
         {
             let area = convert(layer.rect);
-            let locked = self.source(id).is_some_and(|s| s.locked);
-            let color = if locked { MUTED } else { ACCENT };
-            painter.rect_stroke(area, 0, Stroke::new(1.5_f32, color), StrokeKind::Inside);
-            if !locked {
-                for point in [
-                    area.left_top(),
-                    area.right_top(),
-                    area.left_bottom(),
-                    area.right_bottom(),
-                ] {
-                    painter.rect_filled(Rect::from_center_size(point, vec2(7.0, 7.0)), 1, color);
+            canvas_editor::paint_selection(
+                &ui.painter_at(outer),
+                area,
+                rect,
+                source.transform,
+                source.locked,
+            );
+            if !source.locked
+                && !response.dragged()
+                && let Some(pointer) = response.hover_pos()
+            {
+                if let Some(handle) = canvas_editor::hit_handle(area, pointer) {
+                    ctx.set_cursor_icon(handle.cursor());
+                } else if area.contains(pointer) {
+                    ctx.set_cursor_icon(CursorIcon::Grab);
                 }
-                if response
-                    .hover_pos()
-                    .is_some_and(|p| p.distance(area.right_bottom()) < 14.0)
-                {
-                    ctx.set_cursor_icon(CursorIcon::ResizeNwSe);
+            }
+            if self.canvas_drag.is_some() && !modifiers.ctrl {
+                let t = source.transform;
+                for target in &targets {
+                    for axis in 0..2 {
+                        let (position, size) = if axis == 0 {
+                            (t.x, t.width)
+                        } else {
+                            (t.y, t.height)
+                        };
+                        for line in [
+                            target[axis],
+                            target[axis] + target[axis + 2] * 0.5,
+                            target[axis] + target[axis + 2],
+                        ] {
+                            if [position, position + size * 0.5, position + size]
+                                .iter()
+                                .any(|p| (p - line).abs() < 0.0001)
+                            {
+                                let (a, b) = if axis == 0 {
+                                    (
+                                        pos2(rect.left() + line * rect.width(), rect.top()),
+                                        pos2(rect.left() + line * rect.width(), rect.bottom()),
+                                    )
+                                } else {
+                                    (
+                                        pos2(rect.left(), rect.top() + line * rect.height()),
+                                        pos2(rect.right(), rect.top() + line * rect.height()),
+                                    )
+                                };
+                                painter.line_segment(
+                                    [a, b],
+                                    Stroke::new(1.0_f32, Color32::from_rgb(90, 175, 255)),
+                                );
+                            }
+                        }
+                    }
                 }
             }
         }
+        response.context_menu(|ui| {
+            if let Some(id) = self.selected {
+                if ui.button("Propriedades do enquadramento").clicked() {
+                    self.properties = Some(id);
+                    ui.close();
+                }
+                let locked = self.source(id).is_some_and(|s| s.locked);
+                ui.add_enabled_ui(!locked, |ui| {
+                    if ui.button("Ajustar à tela").clicked() {
+                        self.fit_source(id);
+                        ui.close();
+                    }
+                    if ui.button("Centralizar na tela").clicked() {
+                        self.center_source(id);
+                        ui.close();
+                    }
+                    if ui.button("Espelhar horizontalmente").clicked() {
+                        self.remember_transform(id);
+                        let t = &mut self.source_mut(id).unwrap().transform;
+                        t.mirror = !t.mirror;
+                        ui.close();
+                    }
+                    if ui.button("Restaurar enquadramento").clicked() {
+                        self.remember_transform(id);
+                        let t = &mut self.source_mut(id).unwrap().transform;
+                        *t = Transform {
+                            opacity: t.opacity,
+                            ..Default::default()
+                        };
+                        ui.close();
+                    }
+                });
+            }
+            ui.separator();
+            if ui
+                .add_enabled(
+                    !self.transform_undo.is_empty(),
+                    Button::new("Desfazer enquadramento   Ctrl+Z"),
+                )
+                .clicked()
+            {
+                self.undo_transform(false);
+                ui.close();
+            }
+            if ui
+                .add_enabled(
+                    !self.transform_redo.is_empty(),
+                    Button::new("Refazer enquadramento   Ctrl+Y"),
+                )
+                .clicked()
+            {
+                self.undo_transform(true);
+                ui.close();
+            }
+        });
         if ctx.input(|i| !i.raw.hovered_files.is_empty()) {
             painter.rect_stroke(
                 rect.shrink(4.0),
@@ -992,7 +1180,7 @@ impl Studio {
                 ui.set_width(550.0);
                 ui.horizontal(|ui|{ui.label(title("Seu estúdio em poucos passos",24.0));ui.with_layout(Layout::right_to_left(Align::Center),|ui|{if icon_button(ui,Icon::Close,"Fechar ajuda").clicked(){close=true;}});});
                 ui.label(muted("Mini Studio 1.0.0 · Feito para criar e apresentar."));ui.add_space(12.0);
-                for (n,heading,body) in [("01","Crie suas cenas","Use + no painel Cenas, no rodapé. A cena começa vazia; dê um nome e monte sua composição. O menu ••• permite renomear e duplicar."),("02","Monte sua composição","Use + em Fontes para adicionar telas, janelas, câmeras e imagens, inclusive várias do mesmo tipo. A fonte no topo da lista aparece na frente."),("03","Encontre o melhor enquadramento","Selecione e arraste qualquer fonte na prévia. Use o canto inferior direito para redimensionar, as setas para reordenar e o cadeado para bloquear. Dê dois cliques para abrir Propriedades."),("04","Leve sua imagem para outro aplicativo","Inicie a câmera virtual e escolha Mini Studio RS Cam no aplicativo de chamada. Ou salve a composição como PNG.")] {
+                for (n,heading,body) in [("01","Crie suas cenas","Use + no painel Cenas, no rodapé. A cena começa vazia; dê um nome e monte sua composição. O menu ••• permite renomear e duplicar."),("02","Monte sua composição","Use + em Fontes para adicionar telas, janelas, câmeras e imagens, inclusive várias do mesmo tipo. A fonte no topo da lista aparece na frente."),("03","Encontre o melhor enquadramento","Selecione e arraste qualquer fonte na prévia. Arraste as oito alças para redimensionar; Alt recorta e Shift permite tamanho livre. Ctrl desativa o encaixe; Ctrl+Z desfaz. Use o cadeado para bloquear. Dê dois cliques para abrir Propriedades."),("04","Leve sua imagem para outro aplicativo","Inicie a câmera virtual e escolha Mini Studio RS Cam no aplicativo de chamada. Ou salve a composição como PNG.")] {
                     ui.horizontal_top(|ui|{badge(ui,n,ACCENT);ui.vertical(|ui|{ui.label(title(heading,15.0));ui.label(muted(body));});});ui.add_space(6.0);
                 }
                 ui.separator();
@@ -1056,7 +1244,53 @@ impl Studio {
             self.remove_source(id);
         }
         if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape)) {
+            if let Some(drag) = self.canvas_drag.take()
+                && let Some(source) = self.source_mut(drag.id)
+            {
+                source.transform = drag.original;
+            }
             self.selected = None;
+        }
+        if ctx.input_mut(|i| i.consume_key(Modifiers::CTRL, Key::Z)) {
+            self.undo_transform(false);
+        }
+        if ctx.input_mut(|i| i.consume_key(Modifiers::CTRL, Key::Y)) {
+            self.undo_transform(true);
+        }
+        if let Some(id) = self.selected {
+            if ctx.input_mut(|i| i.consume_key(Modifiers::CTRL, Key::E)) {
+                self.properties = Some(id);
+            }
+            if self.source(id).is_some_and(|s| !s.locked) {
+                if ctx.input_mut(|i| i.consume_key(Modifiers::CTRL, Key::F)) {
+                    self.fit_source(id);
+                }
+                for (key, delta) in [
+                    (Key::ArrowLeft, vec2(-1.0, 0.0)),
+                    (Key::ArrowRight, vec2(1.0, 0.0)),
+                    (Key::ArrowUp, vec2(0.0, -1.0)),
+                    (Key::ArrowDown, vec2(0.0, 1.0)),
+                ] {
+                    let shift = ctx.input(|i| i.modifiers.shift);
+                    if ctx.input_mut(|i| {
+                        i.consume_key(
+                            if shift {
+                                Modifiers::SHIFT
+                            } else {
+                                Modifiers::NONE
+                            },
+                            key,
+                        )
+                    }) {
+                        self.remember_transform(id);
+                        let source = self.source_mut(id).unwrap();
+                        let step = if shift { 10.0 } else { 1.0 };
+                        source.transform.x += delta.x * step / WIDTH as f32;
+                        source.transform.y += delta.y * step / HEIGHT as f32;
+                        source.transform.sanitize();
+                    }
+                }
+            }
         }
         if ctx.input_mut(|i| i.consume_key(Modifiers::CTRL, Key::D))
             && let Some(id) = self.selected
@@ -1153,25 +1387,6 @@ fn percent(ui: &mut Ui, label: &str, value: &mut f32, range: std::ops::RangeIncl
     });
     *value = percent / 100.0;
 }
-fn drag_transform(mut start: Transform, delta: [f32; 2], resize: bool) -> Transform {
-    if resize {
-        let dx = delta[0] / start.width;
-        let dy = delta[1] / start.height;
-        let scale = 1.0 + if dx.abs() > dy.abs() { dx } else { dy };
-        let max = ((1.0 - start.x) / start.width)
-            .min((1.0 - start.y) / start.height)
-            .max(0.01);
-        let min = (0.01 / start.width).max(0.01 / start.height).min(max);
-        let scale = scale.clamp(min, max);
-        start.width *= scale;
-        start.height *= scale;
-    } else {
-        start.x = (start.x + delta[0]).clamp(0.0, (1.0 - start.width).max(0.0));
-        start.y = (start.y + delta[1]).clamp(0.0, (1.0 - start.height).max(0.0));
-    }
-    start
-}
-
 fn add_source_tile(ui: &mut Ui, icon: Icon, name: &str, detail: &str) -> Response {
     let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 62.0), Sense::click());
     response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, ui.is_enabled(), name));
@@ -1233,6 +1448,7 @@ mod tests {
         size: Vec2,
         controls: HashMap<String, Rect>,
         time: f64,
+        modifiers: Modifiers,
     }
     impl Harness {
         fn new(size: Vec2) -> Self {
@@ -1252,6 +1468,7 @@ mod tests {
                 size,
                 controls: HashMap::new(),
                 time: 0.0,
+                modifiers: Modifiers::NONE,
             }
         }
         fn frame(&mut self, events: Vec<Event>) {
@@ -1260,6 +1477,7 @@ mod tests {
                 RawInput {
                     screen_rect: Some(Rect::from_min_size(Pos2::ZERO, self.size)),
                     time: Some(self.time),
+                    modifiers: self.modifiers,
                     events,
                     ..Default::default()
                 },
@@ -1470,6 +1688,70 @@ mod tests {
         assert!(h.app.scenes.scenes[0].sources[0].visible);
     }
     #[test]
+    fn mouse_all_handles_crop_stretch_and_keyboard_undo() {
+        let mut h = Harness::new(vec2(1440.0, 900.0));
+        let id = h.image("Enquadramento", [255; 4]);
+        let initial = Transform {
+            x: 0.25,
+            y: 0.25,
+            width: 0.5,
+            height: 0.5,
+            stretch: true,
+            ..Default::default()
+        };
+        h.app.source_mut(id).unwrap().transform = initial;
+        h.frame(vec![]);
+        let preview = h.controls["Prévia da cena"];
+        let area = Rect::from_min_size(preview.min + preview.size() * 0.25, preview.size() * 0.5);
+        for (handle, point) in canvas_editor::handles(area) {
+            h.app.source_mut(id).unwrap().transform = initial;
+            h.app.selected = Some(id);
+            h.frame(vec![]);
+            let Handle::Resize(x, y) = handle else {
+                unreachable!()
+            };
+            h.drag(
+                point,
+                point + vec2(x as f32 * 0.05, y as f32 * 0.05) * preview.size(),
+            );
+            let after = h.app.source(id).unwrap().transform;
+            assert!((after.width - 0.55).abs() < 0.002, "{handle:?}: {after:?}");
+            assert!((after.height - 0.55).abs() < 0.002);
+        }
+        h.app.source_mut(id).unwrap().transform = initial;
+        h.modifiers = Modifiers::ALT;
+        h.frame(vec![]);
+        h.drag(
+            area.left_center(),
+            area.left_center() + vec2(preview.width() * 0.1, 0.0),
+        );
+        let crop = h.app.source(id).unwrap().transform;
+        assert!((crop.crop[0] - 0.2).abs() < 0.002);
+        assert!((crop.width - 0.4).abs() < 0.002);
+        h.modifiers = Modifiers::CTRL;
+        let key = |key| Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::CTRL,
+        };
+        h.frame(vec![key(Key::Z)]);
+        assert_eq!(h.app.source(id).unwrap().transform, initial);
+        h.frame(vec![key(Key::Y)]);
+        assert_eq!(h.app.source(id).unwrap().transform, crop);
+        h.app.source_mut(id).unwrap().transform = initial;
+        h.modifiers = Modifiers::SHIFT;
+        h.frame(vec![]);
+        h.drag(
+            area.right_center(),
+            area.right_center() + vec2(preview.width() * 0.1, 0.0),
+        );
+        let stretched = h.app.source(id).unwrap().transform;
+        assert!((stretched.width - 0.6).abs() < 0.002);
+        assert!((stretched.height - 0.5).abs() < 0.002);
+    }
+    #[test]
     fn image_reloads_after_scene_switch_and_failed_files_remain_configured() {
         let mut h = Harness::new(vec2(1024.0, 720.0));
         let path =
@@ -1545,22 +1827,5 @@ mod tests {
         );
         assert_eq!(h.app.current_scene().sources.len(), 1);
         assert_eq!(h.app.source(new_id).unwrap().name, "Nova");
-    }
-    #[test]
-    fn dragging_and_resizing_stay_in_bounds() {
-        let t = Transform {
-            x: 0.2,
-            y: 0.1,
-            width: 0.4,
-            height: 0.3,
-            ..Default::default()
-        };
-        let moved = drag_transform(t, [4.0, -5.0], false);
-        assert_eq!(moved.x, 0.6);
-        assert_eq!(moved.y, 0.0);
-        let resized = drag_transform(t, [8.0, 9.0], true);
-        assert!(resized.x + resized.width <= 1.0001);
-        assert!(resized.y + resized.height <= 1.0001);
-        assert!((resized.width / resized.height - t.width / t.height).abs() < 0.0001);
     }
 }

@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod camera;
+mod canvas_editor;
 mod composition;
 mod image_source;
 mod native_capture;
@@ -170,7 +171,9 @@ struct Studio {
     saved_path: Option<PathBuf>,
     preferences_at: Instant,
     saved_preferences: preferences::Preferences,
-    canvas_drag: Option<(Source, Transform, bool)>,
+    canvas_drag: Option<canvas_editor::Drag>,
+    transform_undo: Vec<(Source, Transform)>,
+    transform_redo: Vec<(Source, Transform)>,
     image_receiver: Option<Receiver<Result<Option<image_source::LoadedImage>, String>>>,
     virtual_camera: Option<virtual_camera::VirtualCamera>,
     virtual_notice: String,
@@ -246,6 +249,8 @@ impl Studio {
             preferences_at: Instant::now(),
             saved_preferences: prefs,
             canvas_drag: None,
+            transform_undo: Vec::new(),
+            transform_redo: Vec::new(),
             image_receiver: None,
             virtual_camera: None,
             virtual_notice: "Câmera virtual parada.".into(),
@@ -465,6 +470,7 @@ impl Studio {
         self.accept_input(
             ctx,
             SourceInput::Desktop(scenes::DesktopSource {
+                selected_id: Some(source.id),
                 window: kind == SourceKind::Window,
                 name: source.name,
                 detail: source.detail,
@@ -591,6 +597,8 @@ impl Studio {
         self.selected = None;
         self.properties = None;
         self.canvas_drag = None;
+        self.transform_undo.clear();
+        self.transform_redo.clear();
         self.fps = 0.0;
         self.fps_frames = 0;
     }

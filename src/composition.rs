@@ -61,6 +61,9 @@ pub struct Transform {
     pub height: f32,
     pub mirror: bool,
     pub opacity: u8,
+    // Frações da imagem original: esquerda, topo, direita e base, antes de espelhar.
+    pub crop: [f32; 4],
+    pub stretch: bool,
 }
 impl Default for Transform {
     fn default() -> Self {
@@ -71,15 +74,46 @@ impl Default for Transform {
             height: 1.0,
             mirror: false,
             opacity: 255,
+            crop: [0.0; 4],
+            stretch: false,
         }
     }
 }
 impl Transform {
     pub fn sanitize(&mut self) {
-        self.x = self.x.clamp(0.0, 1.0);
-        self.y = self.y.clamp(0.0, 1.0);
-        self.width = self.width.clamp(0.01, 1.0);
-        self.height = self.height.clamp(0.01, 1.0);
+        fn finite(value: f32, fallback: f32, min: f32, max: f32) -> f32 {
+            if value.is_finite() {
+                value.clamp(min, max)
+            } else {
+                fallback
+            }
+        }
+        self.x = finite(self.x, 0.0, -4.0, 4.0);
+        self.y = finite(self.y, 0.0, -4.0, 4.0);
+        self.width = finite(self.width, 1.0, 0.001, 4.0);
+        self.height = finite(self.height, 1.0, 0.001, 4.0);
+        for i in 0..2 {
+            self.crop[i] = finite(self.crop[i], 0.0, 0.0, 0.99);
+            self.crop[i + 2] = finite(self.crop[i + 2], 0.0, 0.0, 0.99 - self.crop[i]);
+        }
+    }
+    pub fn crop_pixels(&self, width: u32, height: u32) -> [u32; 4] {
+        let mut t = *self;
+        t.sanitize();
+        let x = (t.crop[0] * width as f32)
+            .round()
+            .min(width.saturating_sub(1) as f32) as u32;
+        let y = (t.crop[1] * height as f32)
+            .round()
+            .min(height.saturating_sub(1) as f32) as u32;
+        let right = ((1.0 - t.crop[2]) * width as f32).round() as u32;
+        let bottom = ((1.0 - t.crop[3]) * height as f32).round() as u32;
+        [
+            x,
+            y,
+            right.saturating_sub(x).max(1),
+            bottom.saturating_sub(y).max(1),
+        ]
     }
     pub fn from_rect(rect: [f32; 4]) -> Self {
         Self {
@@ -113,6 +147,7 @@ pub struct Layer {
     pub mirror: bool,
     pub opacity: u8,
     pub color: Rgba<u8>,
+    pub uv: [f32; 4],
 }
 
 pub fn fit_rect(src_width: u32, src_height: u32, area: [f32; 4]) -> [f32; 4] {
@@ -176,25 +211,35 @@ impl Scene {
             mirror: false,
             opacity: 255,
             color: BACKGROUND,
+            uv: [0.0, 0.0, 1.0, 1.0],
         }];
         for source in &self.sources {
-            let t = source.transform;
+            let mut t = source.transform;
+            t.sanitize();
+            let [cx, cy, cw, ch] = t.crop_pixels(source.pixels.width, source.pixels.height);
+            let area = [
+                t.x * WIDTH as f32,
+                t.y * HEIGHT as f32,
+                t.width * WIDTH as f32,
+                t.height * HEIGHT as f32,
+            ];
             layers.push(Layer {
                 source: Some(source.id),
-                rect: fit_rect(
-                    source.pixels.width,
-                    source.pixels.height,
-                    [
-                        t.x * WIDTH as f32,
-                        t.y * HEIGHT as f32,
-                        t.width * WIDTH as f32,
-                        t.height * HEIGHT as f32,
-                    ],
-                )
+                rect: if t.stretch {
+                    area
+                } else {
+                    fit_rect(cw, ch, area)
+                }
                 .map(f32::round),
                 mirror: t.mirror,
                 opacity: t.opacity,
                 color: Rgba([255; 4]),
+                uv: [
+                    cx as f32 / source.pixels.width.max(1) as f32,
+                    cy as f32 / source.pixels.height.max(1) as f32,
+                    (cx + cw) as f32 / source.pixels.width.max(1) as f32,
+                    (cy + ch) as f32 / source.pixels.height.max(1) as f32,
+                ],
             });
         }
         layers
@@ -204,7 +249,7 @@ impl Scene {
         let mut canvas = RgbaImage::from_pixel(WIDTH, HEIGHT, BACKGROUND);
         let mut resizer = Resizer::new();
         for layer in self.layers().into_iter().skip(1) {
-            let [x, y, w, h] = layer.rect.map(|n| n as u32);
+            let [x, y, w, h] = layer.rect.map(|n| n as i64);
             if let Some(source) = layer.source {
                 let p = self.pixels(source).ok_or("Fonte ausente.")?;
                 if p.width == 0
@@ -216,9 +261,31 @@ impl Scene {
                 {
                     return Err("A fonte retornou um quadro RGBA inválido.".into());
                 }
-                let src = ImageRef::new(p.width, p.height, &p.rgba, PixelType::U8x4)
-                    .map_err(|e| e.to_string())?;
-                let mut dst = Image::new(w.max(1), h.max(1), PixelType::U8x4);
+                let transform = self
+                    .sources
+                    .iter()
+                    .find(|s| s.id == source)
+                    .unwrap()
+                    .transform;
+                let [cx, cy, cw, ch] = transform.crop_pixels(p.width, p.height);
+                let cropped;
+                let bytes = if cx == 0 && cy == 0 && cw == p.width && ch == p.height {
+                    &p.rgba[..]
+                } else {
+                    cropped = (cy..cy + ch)
+                        .flat_map(|row| {
+                            let start = ((row * p.width + cx) * 4) as usize;
+                            p.rgba[start..start + cw as usize * 4].iter().copied()
+                        })
+                        .collect::<Vec<_>>();
+                    &cropped
+                };
+                if x >= WIDTH as i64 || y >= HEIGHT as i64 || x + w <= 0 || y + h <= 0 {
+                    continue;
+                }
+                let src =
+                    ImageRef::new(cw, ch, bytes, PixelType::U8x4).map_err(|e| e.to_string())?;
+                let mut dst = Image::new(w.max(1) as u32, h.max(1) as u32, PixelType::U8x4);
                 resizer
                     .resize(
                         &src,
@@ -228,17 +295,20 @@ impl Scene {
                         )),
                     )
                     .map_err(|e| e.to_string())?;
-                let mut image = RgbaImage::from_raw(w.max(1), h.max(1), dst.into_vec())
-                    .ok_or("Quadro inválido.")?;
+                let mut image =
+                    RgbaImage::from_raw(w.max(1) as u32, h.max(1) as u32, dst.into_vec())
+                        .ok_or("Quadro inválido.")?;
                 if layer.mirror {
                     imageops::flip_horizontal_in_place(&mut image);
                 }
                 // Mistura inteira sobre fundo opaco evita perda de alfa por arredondamento.
                 for (sx, sy, pixel) in image.enumerate_pixels() {
-                    if x + sx >= WIDTH || y + sy >= HEIGHT {
+                    let px = x + sx as i64;
+                    let py = y + sy as i64;
+                    if px < 0 || py < 0 || px >= WIDTH as i64 || py >= HEIGHT as i64 {
                         continue;
                     }
-                    let dst = canvas.get_pixel_mut(x + sx, y + sy);
+                    let dst = canvas.get_pixel_mut(px as u32, py as u32);
                     let alpha = (u32::from(pixel[3]) * u32::from(layer.opacity) + 127) / 255;
                     for channel in 0..3 {
                         dst[channel] = ((u32::from(pixel[channel]) * alpha
@@ -249,9 +319,9 @@ impl Scene {
                     dst[3] = 255;
                 }
             } else {
-                for py in y..(y + h).min(HEIGHT) {
-                    for px in x..(x + w).min(WIDTH) {
-                        canvas.put_pixel(px, py, layer.color);
+                for py in y.max(0)..(y + h).min(HEIGHT as i64) {
+                    for px in x.max(0)..(x + w).min(WIDTH as i64) {
+                        canvas.put_pixel(px as u32, py as u32, layer.color);
                     }
                 }
             }
@@ -263,6 +333,74 @@ impl Scene {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn crop_uv_matches_export_and_negative_positions_clip_without_shifting() {
+        let pixels = Pixels {
+            width: 4,
+            height: 2,
+            rgba: [
+                255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255,
+            ]
+            .repeat(2)
+            .into(),
+        };
+        let mut source = SceneSource {
+            id: 1,
+            pixels,
+            transform: Transform {
+                x: -0.125,
+                y: -0.125,
+                width: 0.5,
+                height: 0.5,
+                crop: [0.25, 0.0, 0.25, 0.0],
+                stretch: true,
+                ..Default::default()
+            },
+        };
+        for mirror in [false, true] {
+            source.transform.mirror = mirror;
+            let scene = Scene {
+                sources: vec![source.clone()],
+            };
+            assert_eq!(scene.layers()[1].uv, [0.25, 0.0, 0.75, 1.0]);
+            assert_eq!(scene.layers()[1].rect, [-160.0, -90.0, 640.0, 360.0]);
+            let image = scene.compose().unwrap();
+            assert_eq!(
+                image.get_pixel(0, 0).0,
+                if mirror {
+                    [0, 0, 255, 255]
+                } else {
+                    [0, 255, 0, 255]
+                }
+            );
+            assert_eq!(
+                image.get_pixel(479, 269).0,
+                if mirror {
+                    [0, 255, 0, 255]
+                } else {
+                    [0, 0, 255, 255]
+                }
+            );
+            assert_eq!(*image.get_pixel(480, 270), BACKGROUND);
+        }
+    }
+    #[test]
+    fn old_transforms_keep_defaults_and_new_transforms_round_trip() {
+        let old: Transform = serde_json::from_str(r#"{"x":0.2,"width":0.5}"#).unwrap();
+        assert_eq!(old.crop, [0.0; 4]);
+        assert!(!old.stretch);
+        let new = Transform {
+            x: -0.2,
+            width: 1.4,
+            crop: [0.2, 0.1, 0.3, 0.15],
+            stretch: true,
+            ..old
+        };
+        let mut decoded: Transform =
+            serde_json::from_str(&serde_json::to_string(&new).unwrap()).unwrap();
+        decoded.sanitize();
+        assert_eq!(new, decoded);
+    }
     fn solid(id: u64, color: [u8; 4]) -> SceneSource {
         SceneSource {
             id,

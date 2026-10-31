@@ -12,7 +12,7 @@ Também há **`dist/MiniStudio-1.0.0-portable.zip`**: extraia e abra `mini-studi
 
 1. No rodapé, use **+** em **Cenas** para criar uma composição vazia e dar um nome.
 2. Use **+** em **Fontes** para adicionar telas, janelas, câmeras e imagens. Combine várias fontes, inclusive do mesmo tipo.
-3. Arraste qualquer fonte na prévia para posicioná-la; arraste seu canto inferior direito para redimensionar. A lista mostra as fontes da frente para trás; use **↑ / ↓** para mudar a ordem.
+3. Arraste qualquer fonte na prévia para posicioná-la; use as oito alças dos cantos e laterais para redimensionar. A lista mostra as fontes da frente para trás; use **↑ / ↓** para mudar a ordem.
 4. O olho mostra ou oculta e o cadeado bloqueia o movimento na prévia. **Propriedades** (ou dois cliques na fonte) abre nome, posição, tamanho, espelhamento e opacidade.
 5. Em **Controles**, salve a cena, exporte uma imagem PNG ou inicie a câmera virtual. No aplicativo consumidor, escolha **Mini Studio RS Cam**.
 
@@ -32,6 +32,17 @@ Cada cena guarda uma lista ordenada de fontes, com nomes, visibilidade, bloqueio
 
 As cenas ficam em `%LOCALAPPDATA%\MiniStudioRS\scenes.json`. A estrutura anterior é migrada para a lista de fontes, preservando os nomes, referências e visibilidade. Imagens são referenciadas pelo caminho original: mantenha os arquivos nesse local. Telas e janelas são localizadas novamente pelo nome; se o título mudar ou houver mais de uma correspondência, selecione a fonte outra vez.
 
+## Enquadramento com o mouse
+
+- Selecione a fonte na prévia ou na lista. As oito alças redimensionam preservando a proporção atual; segure **Shift** para alterar largura e altura livremente.
+- Segure **Alt** e arraste uma alça para recortar. Arraste de volta para recuperar a parte escondida; o arquivo original permanece intacto. Fontes recortadas têm contorno verde.
+- Ao mover, a fonte encaixa nas bordas e centros da tela e das outras fontes visíveis. Segure **Ctrl** para mover sem encaixe. As linhas azuis indicam alinhamentos; as medidas mostram as distâncias até as bordas em pixels da saída 1280 × 720.
+- É possível mover e ampliar uma fonte além da tela; a saída mostra apenas a parte dentro dela.
+- O **botão direito** abre ações para ajustar à tela, centralizar, espelhar e restaurar o enquadramento. Propriedades também oferece valores de recorte e tamanho.
+- **Ctrl+Z / Ctrl+Y** desfazem/refazem os gestos da prévia e as ações do menu de enquadramento na cena atual. **Esc**, durante um arraste, cancela o gesto. O cadeado impede gestos e movimentos pelo teclado.
+
+Posição, tamanho, recorte e espelhamento são salvos com cada fonte e aplicados à prévia, ao PNG e à câmera virtual. As alças e medidas aparecem somente no editor.
+
 ## Recursos
 
 - Interface escura com tipografia do Windows, ícones vetoriais, controles acessíveis por teclado e painéis que se adaptam a janelas menores.
@@ -49,6 +60,10 @@ As cenas ficam em `%LOCALAPPDATA%\MiniStudioRS\scenes.json`. A estrutura anterio
 | Ctrl+S | Salvar cena |
 | Ctrl+Shift+S | Exportar composição PNG |
 | Ctrl+D | Duplicar fonte selecionada |
+| Ctrl+E | Propriedades da fonte |
+| Ctrl+F | Ajustar fonte à tela |
+| Ctrl+Z / Ctrl+Y | Desfazer / refazer enquadramento na prévia |
+| Setas / Shift+setas | Mover fonte 1 / 10 pixels |
 | Del | Remover fonte selecionada |
 | F1 | Ajuda e escala da interface |
 | Esc | Fechar diálogo ou desmarcar fonte |
