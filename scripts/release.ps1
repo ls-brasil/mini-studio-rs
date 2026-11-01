@@ -45,7 +45,20 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'O instalador não passou nas verificações ICE.' }
     $zip = Join-Path $repo "dist/MiniStudio-$version-portable.zip"
     Compress-Archive -LiteralPath (Join-Path $out 'mini-studio-rs.exe'), (Join-Path $out 'Guia-do-usuario.txt'), (Join-Path $out 'Avisos-de-terceiros.txt') -DestinationPath $zip -Force
-    Get-FileHash -LiteralPath $msi,$zip -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLower())  $([IO.Path]::GetFileName($_.Path))" } | Set-Content (Join-Path $repo "dist/SHA256SUMS-$version.txt") -Encoding ASCII
+    # Usa .NET diretamente para funcionar mesmo sem o cmdlet Get-FileHash.
+    $checksums = foreach ($artifact in @($msi, $zip)) {
+        $sha256 = [System.Security.Cryptography.SHA256]::Create()
+        try {
+            $stream = [System.IO.File]::OpenRead($artifact)
+            try {
+                $hash = [System.BitConverter]::ToString($sha256.ComputeHash($stream)).Replace('-', '').ToLowerInvariant()
+                "$hash  $([System.IO.Path]::GetFileName($artifact))"
+            }
+            finally { $stream.Dispose() }
+        }
+        finally { $sha256.Dispose() }
+    }
+    $checksums | Set-Content (Join-Path $repo "dist/SHA256SUMS-$version.txt") -Encoding ASCII
     Write-Host "Pronto: $msi"
     Write-Host "Portátil: $zip (a câmera virtual exige instalação pelo MSI)."
 }
