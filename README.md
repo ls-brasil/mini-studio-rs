@@ -1,6 +1,6 @@
 # Mini Studio 1.0.0
 
-Seu espaço para criar e apresentar. Um estúdio nativo para Windows que combina tela, janela, câmera e imagem, com prévia ao vivo, exportação PNG e câmera virtual.
+Seu espaço para criar e apresentar. Um estúdio nativo para Windows que combina tela, janela, câmera, canais NDI e imagem, com prévia ao vivo, exportação PNG e câmera virtual.
 
 ![Interface do Mini Studio 1.0.0](docs/screenshots/studio.png)
 
@@ -11,7 +11,7 @@ Abra **`dist/MiniStudio-1.0.0-Setup.msi`**. O instalador em português cria os a
 Também há **`dist/MiniStudio-1.0.0-portable.zip`**: extraia e abra `mini-studio-rs.exe`. A câmera virtual exige o componente instalado pelo MSI. Os hashes dos pacotes ficam em `dist/SHA256SUMS-1.0.0.txt`.
 
 1. No rodapé, use **+** em **Cenas** para dar um nome e escolher um modelo: cena vazia, tela com câmera, janela com câmera ou duas janelas lado a lado. Nos modelos, escolha as fontes em sequência; o enquadramento já vem pronto.
-2. Na prévia vazia, use os botões **Tela**, **Janela**, **Câmera** e **Imagem** para começar, ou escolha **Usar modelo**. Use **+** em **Fontes** para adicionar outras camadas, inclusive do mesmo tipo.
+2. Na prévia vazia, use os botões **Tela**, **Janela**, **Câmera**, **NDI** e **Imagem** para começar, ou escolha **Usar modelo**. Use **+** em **Fontes** para adicionar outras camadas, inclusive do mesmo tipo.
 3. Arraste qualquer fonte na prévia para posicioná-la; use as oito alças dos cantos e laterais para redimensionar. A lista mostra as fontes da frente para trás; use **↑ / ↓** para mudar a ordem.
 4. O olho mostra ou oculta e o cadeado bloqueia o movimento na prévia. **Propriedades** (ou dois cliques na fonte) abre nome, arquivo/dispositivo, espelhamento e opacidade. Posição, tamanho e recorte são ajustados diretamente na prévia.
 5. Em **Controles**, salve a cena, exporte uma imagem PNG ou inicie a câmera virtual. No aplicativo consumidor, escolha **Mini Studio RS Cam**.
@@ -35,6 +35,18 @@ Cada cena guarda uma lista ordenada de fontes, com nomes, visibilidade, bloqueio
 Nos modelos, cancelar a seleção mantém as fontes já escolhidas na cena; você pode continuar a montagem manualmente. As proporções originais são preservadas, inclusive no modelo lado a lado.
 
 As cenas ficam em `%LOCALAPPDATA%\MiniStudioRS\scenes.json`. A estrutura anterior é migrada para a lista de fontes, preservando os nomes, referências e visibilidade. Imagens são referenciadas pelo caminho original: mantenha os arquivos nesse local. Telas e janelas são localizadas novamente pelo nome; se o título mudar ou houver mais de uma correspondência, selecione a fonte outra vez.
+
+## Receber canais NDI
+
+No código atual, **+ em Fontes → NDI** (ou **NDI** na prévia vazia) procura transmissores no computador e na rede local. Instale o [NDI Runtime 6 para Windows x64](https://ndi.link/NDIRedistV6), abra o transmissor e selecione o canal. O botão **Atualizar lista** repete a busca; anúncios da rede podem levar alguns segundos. Sem o runtime, os demais tipos de fonte continuam funcionando.
+
+O canal passa a ser uma camada normal: pode ser recortado, espelhado, duplicado, sobreposto e usado na prévia, no projetor, no PNG e na câmera virtual. **Propriedades → Escolher outra fonte** permite escolher outro canal preservando o enquadramento. A cena salva o nome completo do canal; **Ativar fontes** retoma a recepção após reabrir o aplicativo.
+
+Se o vídeo parar por três segundos, a imagem antiga é removida e aparece **Aguardando NDI…**. A recepção volta automaticamente quando o mesmo canal reaparece. Confira o transmissor, a rede e as permissões de firewall se a lista estiver vazia. O NDI Access Manager pode configurar descoberta entre sub-redes.
+
+A integração recebe **somente vídeo**, até 16.777.216 pixels e 8192 pixels por lado. Áudio, PTZ, tally e envio NDI não estão implementados. A geometria atual presume pixels quadrados; sinais anamórficos precisam de ajuste manual do enquadramento. A recepção NDI HX depende do suporte do runtime e do emissor e ainda não foi validada aqui. O runtime é instalado separadamente e não é incluído nos pacotes do Mini Studio. Os pacotes 1.0 já existentes em `dist` não são atualizados apenas por alterar o código.
+
+Referências e validação da implementação: [integração NDI](docs/ndi.md).
 
 ## Enquadramento com o mouse
 
@@ -114,8 +126,11 @@ Há testes da composição, transparência, imagens inválidas, conversão NV12,
 cargo test installed_virtual_camera_round_trip -- --ignored --nocapture
 cargo test installed_virtual_camera_ffmpeg -- --ignored --nocapture
 cargo test benchmark_real_monitor_stream -- --ignored --nocapture
+cargo test installed_ndi_video_round_trip -- --ignored --nocapture
 ```
 
 O primeiro exige o componente instalado; o segundo também exige FFmpeg no PATH. Para o teste contínuo, defina `$env:MINISTUDIO_VCAM_TEST_SECONDS='600'` antes de executar o primeiro comando.
+
+O teste NDI exige o runtime x64 e anuncia um canal de vídeo sintético na rede local. Verifica descoberta, cores/transparência, troca de resolução, perda de sinal, reconexão e encerramento.
 
 Resultados e limites: [validação da 1.0](docs/validacao-1.0.0.md), [desempenho](docs/desempenho.md) e [arquitetura de imagens/câmera virtual](docs/imagens-e-camera-virtual.md). As [decisões do MVP](docs/mvp.md) são somente histórico.

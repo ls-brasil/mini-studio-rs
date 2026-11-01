@@ -2,9 +2,17 @@
 
 ## Em desenvolvimento
 
+- Nova fonte NDI com descoberta de canais locais e da rede, busca por nome e atualização da lista, disponível na prévia vazia e no menu de Fontes.
+- Canais NDI salvos nas cenas, compartilhamento de recepção entre fontes iguais e substituição do canal preservando o enquadramento. O vídeo participa da composição, projetor, exportação PNG e câmera virtual.
+- Recepção NDI em segundo plano, com transparência e mudanças de resolução; após três segundos sem vídeo, a imagem antiga é removida e a fonte aguarda reconexão automática.
+- Carregamento opcional do NDI Runtime x64, com orientação e link de instalação no seletor. Recepção somente de vídeo; áudio, PTZ, tally e envio NDI não estão disponíveis, e NDI HX ainda não foi validado.
+- Documentação da integração NDI, avisos de licença dos headers incluídos no empacotamento e testes de persistência, interface, conversão de quadros e recepção/reconexão com runtime real.
 - Opção de capturar ou ocultar o ponteiro do mouse nas propriedades de cada fonte de tela ou janela, salva com a cena e aplicada ao alterar.
 - Projetor de saída limpa em janela própria ou tela cheia no monitor escolhido, acompanhando a cena ativa sem guias ou controles.
 - Projeção com proporção preservada, atalhos F11/Esc e funcionamento independente da câmera virtual.
+- Encerramento da projeção com aviso quando o monitor de destino é desconectado ou reconfigurado.
+- Skill e guias de engenharia reversa adicionados ao projeto, incluindo observação de execução e registro de evidências.
+- Orientação permanente em AGENTS.md para atualizar este histórico junto com cada mudança e conferir commits e alterações pendentes antes de concluir.
 
 ## 1.0.3 — 31/10/2026
 
@@ -32,6 +40,8 @@
 
 - Nova interface nativa com tema escuro, identidade visual, estados vazios orientados e layout adaptável.
 - Fontes em camadas, visibilidade individual, ajustes contextuais e posicionamento pela prévia.
+- Múltiplas fontes do mesmo tipo por cena, duplicação com captura compartilhada, ordem das camadas, bloqueio e migração das cenas anteriores.
+- Redimensionamento por alças, recorte com Alt, proporção livre com Shift, encaixe nas bordas e centros, espelhamento e desfazer/refazer do enquadramento.
 - Guias de composição, busca de fontes, atalhos, ajuda integrada e escala de interface.
 - Persistência dos ajustes por usuário e tratamento de erros sem perder a imagem anterior.
 - Acessibilidade dos controles por teclado e integração AccessKit/UI Automation.

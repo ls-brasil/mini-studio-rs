@@ -45,9 +45,15 @@ pub struct CameraSource {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct NdiSource {
+    pub name: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum SourceInput {
     Desktop(DesktopSource),
     Camera(CameraSource),
+    Ndi(NdiSource),
     Image(PathBuf),
 }
 impl SourceInput {
@@ -61,6 +67,7 @@ impl SourceInput {
                 }
             }
             Self::Camera(_) => "Câmera",
+            Self::Ndi(_) => "NDI",
             Self::Image(_) => "Imagem",
         }
     }
@@ -68,6 +75,7 @@ impl SourceInput {
         match self {
             Self::Desktop(d) => d.name.clone(),
             Self::Camera(c) => c.name.clone(),
+            Self::Ndi(source) => source.name.clone(),
             Self::Image(path) => path
                 .file_name()
                 .unwrap_or_default()
@@ -328,6 +336,41 @@ impl LegacyScene {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn ndi_channel_identity_round_trips_with_other_source_types() {
+        let input = SourceInput::Ndi(NdiSource {
+            name: "ESTÚDIO (Câmera principal)".into(),
+        });
+        let mut library = SceneLibrary::default();
+        library.scenes[0].sources = vec![
+            SavedSource {
+                id: 1,
+                name: "Vídeo da rede".into(),
+                input: input.clone(),
+                visible: false,
+                locked: true,
+                transform: Transform {
+                    x: 0.25,
+                    width: 0.5,
+                    mirror: true,
+                    ..Default::default()
+                },
+            },
+            SavedSource {
+                id: 2,
+                name: "Fundo".into(),
+                input: SourceInput::Image("C:/fundo.png".into()),
+                visible: true,
+                locked: false,
+                transform: Transform::default(),
+            },
+        ];
+        let restored = SceneLibrary::decode(&serde_json::to_vec(&library).unwrap()).unwrap();
+        assert_eq!(restored, library);
+        assert_eq!(input.label(), "NDI");
+        assert_eq!(input.name(), "ESTÚDIO (Câmera principal)");
+    }
+
     #[test]
     fn cursor_preference_defaults_on_for_old_scenes_and_round_trips_per_source() {
         let old = br#"{"version":2,"active":0,"scenes":[{"name":"Cena","sources":[{"id":1,"name":"Tela","input":{"Desktop":{"window":false,"name":"Tela","detail":"Monitor"}},"visible":true,"locked":false,"transform":{}}]}]}"#;

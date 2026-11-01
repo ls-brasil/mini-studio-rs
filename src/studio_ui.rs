@@ -268,6 +268,7 @@ impl Studio {
                             ("Tela", Some(PickerKind::Screen)),
                             ("Janela", Some(PickerKind::Window)),
                             ("Câmera", Some(PickerKind::Camera)),
+                            ("NDI", Some(PickerKind::Ndi)),
                             ("Imagem", None),
                         ] {
                             if ui
@@ -355,6 +356,7 @@ impl Studio {
                                             }
                                         }
                                         SourceInput::Camera(_) => Icon::Camera,
+                                        SourceInput::Ndi(_) => Icon::Monitor,
                                         SourceInput::Image(_) => Icon::Image,
                                     };
                                     let (rect, _) =
@@ -372,6 +374,8 @@ impl Studio {
                                             let r = r.borrow();
                                             if let Some(error) = &r.error {
                                                 error.clone()
+                                            } else if r.waiting_ndi() {
+                                                "Aguardando NDI…".into()
                                             } else if r.loading_now() {
                                                 "Abrindo fonte…".into()
                                             } else {
@@ -501,6 +505,7 @@ impl Studio {
         match input {
             SourceInput::Image(_) => self.load_image(ctx, None, Some(id)),
             SourceInput::Camera(_) => self.open_picker(ctx, PickerKind::Camera, Some(id)),
+            SourceInput::Ndi(_) => self.open_picker(ctx, PickerKind::Ndi, Some(id)),
             SourceInput::Desktop(desktop) => self.open_picker(
                 ctx,
                 if desktop.window {
@@ -808,7 +813,7 @@ impl Studio {
         if !self.has_sources() {
             let content = Rect::from_center_size(
                 outer.center(),
-                vec2(outer.width().min(420.0) - 24.0, outer.height().min(166.0)),
+                vec2(outer.width().min(520.0) - 24.0, outer.height().min(200.0)),
             );
             ui.scope_builder(
                 UiBuilder::new()
@@ -823,6 +828,7 @@ impl Studio {
                             ("Tela", Some(PickerKind::Screen)),
                             ("Janela", Some(PickerKind::Window)),
                             ("Câmera", Some(PickerKind::Camera)),
+                            ("NDI", Some(PickerKind::Ndi)),
                             ("Imagem", None),
                         ] {
                             if ui
@@ -870,6 +876,21 @@ impl Studio {
                 (
                     "Fontes ocultas",
                     "Use o olho na lista de fontes para mostrá-las",
+                )
+            } else if self
+                .current_scene()
+                .sources
+                .iter()
+                .filter(|source| source.visible)
+                .any(|source| {
+                    self.runtimes
+                        .get(&source.id)
+                        .is_some_and(|runtime| runtime.borrow().waiting_ndi())
+                })
+            {
+                (
+                    "Aguardando NDI…",
+                    "Confira o transmissor e a rede; a conexão será retomada automaticamente",
                 )
             } else if self
                 .runtimes
@@ -1157,6 +1178,11 @@ impl Studio {
                     "Conecte um dispositivo para aparecer na composição.",
                     Icon::Camera,
                 ),
+                PickerKind::Ndi => (
+                    "Receber canal NDI",
+                    "Escolha um transmissor na mesma rede. Recepção somente de vídeo.",
+                    Icon::Monitor,
+                ),
             };
             let result = Modal::new(Id::new("source_picker"))
                 .frame(modal_frame())
@@ -1174,6 +1200,10 @@ impl Studio {
                         ui.label(RichText::new(progress).color(ACCENT));
                     }
                     ui.label(muted(description));
+                    if matches!(picker.kind, PickerKind::Ndi) {
+                        ui.label(muted("Requer o NDI Runtime instalado neste computador."));
+                        ui.hyperlink_to("Baixar NDI Runtime", "https://ndi.link/NDIRedistV6");
+                    }
                     ui.add_space(12.0);
                     ui.add(
                         TextEdit::singleline(&mut picker.search)
@@ -1271,6 +1301,9 @@ impl Studio {
                 Some(Choice::Camera(device)) => {
                     self.start_camera(ctx, device);
                 }
+                Some(Choice::Ndi(source)) => {
+                    self.accept_input(ctx, SourceInput::Ndi(source));
+                }
                 None => {}
             }
         }
@@ -1283,7 +1316,7 @@ impl Studio {
                 ui.set_width(550.0);
                 ui.horizontal(|ui|{ui.label(title("Seu estúdio em poucos passos",24.0));ui.with_layout(Layout::right_to_left(Align::Center),|ui|{if icon_button(ui,Icon::Close,"Fechar ajuda").clicked(){close=true;}});});
                 ui.label(muted("Mini Studio 1.0.0 · Feito para criar e apresentar."));ui.add_space(12.0);
-                for (n,heading,body) in [("01","Crie suas cenas","Use + no painel Cenas e escolha um modelo para enquadrar suas fontes automaticamente, ou comece com uma cena vazia. O menu ••• permite renomear e duplicar."),("02","Monte sua composição","Na cena vazia, adicione Tela, Janela, Câmera ou Imagem direto na prévia. Use + em Fontes para adicionar mais. Fontes salvas têm ações de ativar, reconectar e substituir na própria lista."),("03","Encontre o melhor enquadramento","Selecione e arraste qualquer fonte na prévia. Arraste as oito alças para redimensionar; Alt recorta e Shift permite tamanho livre. Ctrl desativa o encaixe; Ctrl+Z desfaz. Use o cadeado para bloquear. Dê dois cliques para abrir Propriedades."),("04","Leve sua imagem para outro aplicativo","Inicie a câmera virtual e escolha Mini Studio RS Cam no aplicativo de chamada. Ou salve a composição como PNG.")] {
+                for (n,heading,body) in [("01","Crie suas cenas","Use + no painel Cenas e escolha um modelo para enquadrar suas fontes automaticamente, ou comece com uma cena vazia. O menu ••• permite renomear e duplicar."),("02","Monte sua composição","Na cena vazia, adicione Tela, Janela, Câmera, NDI ou Imagem direto na prévia. Use + em Fontes para adicionar mais. Fontes salvas têm ações de ativar, reconectar e substituir na própria lista."),("03","Encontre o melhor enquadramento","Selecione e arraste qualquer fonte na prévia. Arraste as oito alças para redimensionar; Alt recorta e Shift permite tamanho livre. Ctrl desativa o encaixe; Ctrl+Z desfaz. Use o cadeado para bloquear. Dê dois cliques para abrir Propriedades."),("04","Leve sua imagem para outro aplicativo","Inicie a câmera virtual e escolha Mini Studio RS Cam no aplicativo de chamada. Ou salve a composição como PNG.")] {
                     ui.horizontal_top(|ui|{badge(ui,n,ACCENT);ui.vertical(|ui|{ui.label(title(heading,15.0));ui.label(muted(body));});});ui.add_space(6.0);
                 }
                 ui.separator();
@@ -1547,6 +1580,83 @@ fn reveal_file(path: &Path) {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn ndi_picker_adds_and_replaces_channels_without_losing_geometry() {
+        use crate::{Picker, scenes::NdiSource};
+        use std::rc::Rc;
+
+        let mut h = Harness::new(vec2(1024.0, 720.0));
+        let channel = NdiSource {
+            name: "ESTUDIO (Câmera 1)".into(),
+        };
+        // Um runtime em memória evita acesso à rede neste teste do seletor.
+        let shared_id = h.image("Canal existente", [255; 4]);
+        h.app.source_mut(shared_id).unwrap().input = SourceInput::Ndi(channel.clone());
+        let shared = h.app.runtimes[&shared_id].clone();
+        let picker = || Picker {
+            kind: PickerKind::Ndi,
+            receiver: None,
+            choices: vec![Choice::Ndi(channel.clone())],
+            message: "Selecione uma fonte.".into(),
+            search: "câmera".into(),
+        };
+        h.app.picker = Some(picker());
+        h.click(&channel.name);
+        let added = h.app.selected.unwrap();
+        assert_ne!(added, shared_id);
+        assert_eq!(
+            h.app.source(added).unwrap().input,
+            SourceInput::Ndi(channel.clone())
+        );
+        assert!(Rc::ptr_eq(&h.app.runtimes[&added], &shared));
+        assert!(h.app.picker.is_none());
+
+        let target = h.image("Enquadramento preservado", [0, 0, 0, 255]);
+        h.app.source_mut(target).unwrap().transform = Transform {
+            x: 0.2,
+            y: 0.1,
+            width: 0.5,
+            height: 0.6,
+            mirror: true,
+            ..Default::default()
+        };
+        let before = h.app.source(target).unwrap().clone();
+        h.app.picker = Some(picker());
+        h.app.picker_target = Some(target);
+        h.click(&channel.name);
+        let after = h.app.source(target).unwrap();
+        assert_eq!(after.name, before.name);
+        assert_eq!(after.transform, before.transform);
+        assert_eq!(after.input, SourceInput::Ndi(channel));
+        assert!(Rc::ptr_eq(&h.app.runtimes[&target], &shared));
+        assert_eq!(h.app.current_scene().sources.len(), 3);
+        assert!(h.app.picker_target.is_none());
+    }
+
+    #[test]
+    fn ndi_picker_cancel_preserves_saved_source() {
+        use crate::{Picker, scenes::NdiSource};
+
+        let mut h = Harness::new(vec2(800.0, 600.0));
+        let id = h.image("Canal salvo", [255; 4]);
+        h.app.source_mut(id).unwrap().input = SourceInput::Ndi(NdiSource {
+            name: "ESTUDIO (Canal salvo)".into(),
+        });
+        let before = h.app.source(id).unwrap().clone();
+        h.app.picker_target = Some(id);
+        h.app.picker = Some(Picker {
+            kind: PickerKind::Ndi,
+            receiver: None,
+            choices: vec![],
+            message: "Nenhum canal NDI encontrado.".into(),
+            search: String::new(),
+        });
+        h.click("Cancelar");
+        assert_eq!(h.app.source(id).unwrap(), &before);
+        assert!(h.app.picker.is_none());
+        assert!(h.app.picker_target.is_none());
+    }
+
+    #[test]
     fn desktop_properties_toggle_cursor_without_changing_shared_source_or_geometry() {
         use std::rc::Rc;
 
@@ -1678,7 +1788,7 @@ mod tests {
             let mut h = Harness::new(size);
             h.frame(vec![]);
             h.frame(vec![]);
-            for label in ["Tela", "Janela", "Câmera", "Imagem", "Usar modelo"] {
+            for label in ["Tela", "Janela", "Câmera", "NDI", "Imagem", "Usar modelo"] {
                 let bounds = h
                     .controls
                     .get(label)

@@ -12,6 +12,8 @@ resolved = {node["id"] for node in metadata["resolve"]["nodes"]}
 parts = ["MINI STUDIO — AVISOS DE TERCEIROS\n\n"
          "Os componentes abaixo mantêm as licenças dos respectivos autores.\n"
          "As fontes Segoe UI são lidas do Windows e não são redistribuídas.\n"]
+parts.append("\n" + "=" * 72 + "\n" +
+             (repo / "docs" / "NDI-headers-LICENSE.txt").read_text(encoding="utf-8"))
 for package in sorted(metadata["packages"], key=lambda p: (p["name"], p["version"])):
     if package["name"] == "mini-studio-rs" or package["id"] not in resolved:
         continue

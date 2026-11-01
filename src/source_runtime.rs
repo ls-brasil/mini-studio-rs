@@ -3,6 +3,7 @@ use crate::{
     composition::Pixels,
     image_source, load_texture,
     native_capture::{self, CaptureSession, SourceKind},
+    ndi::NdiCapture,
     scenes::SourceInput,
 };
 use eframe::egui::{ColorImage, Context, TextureHandle, TextureOptions};
@@ -28,11 +29,12 @@ pub enum Stream {
     Image,
     Desktop(CaptureSession, u32),
     Camera(CameraCapture, u64),
+    Ndi(NdiCapture, u64),
     Loading(Pending),
     Offline,
 }
 struct Ready {
-    pixels: Pixels,
+    pixels: Option<Pixels>,
     stream: Stream,
 }
 
@@ -60,7 +62,7 @@ impl RuntimeSource {
         std::thread::spawn(move || {
             let result = (|| match input {
                 SourceInput::Image(path) => Ok(Ready {
-                    pixels: image_source::load(&path)?.pixels,
+                    pixels: Some(image_source::load(&path)?.pixels),
                     stream: Stream::Image,
                 }),
                 SourceInput::Desktop(saved) => {
@@ -84,11 +86,11 @@ impl RuntimeSource {
                             let wake = context.clone();
                             capture.set_waker(Arc::new(move || wake.request_repaint()));
                             return Ok(Ready {
-                                pixels: Pixels {
+                                pixels: Some(Pixels {
                                     width: frame.width,
                                     height: frame.height,
                                     rgba: frame.rgba,
-                                },
+                                }),
                                 stream: Stream::Desktop(capture, frame.sequence),
                             });
                         }
@@ -103,17 +105,26 @@ impl RuntimeSource {
                             let wake = context.clone();
                             capture.set_waker(Arc::new(move || wake.request_repaint()));
                             return Ok(Ready {
-                                pixels: Pixels {
+                                pixels: Some(Pixels {
                                     width: frame.width,
                                     height: frame.height,
                                     rgba: frame.rgba,
-                                },
+                                }),
                                 stream: Stream::Camera(capture, frame.sequence),
                             });
                         }
                         std::thread::sleep(Duration::from_millis(10));
                     }
                     Err("A câmera não respondeu. Confira o dispositivo e tente novamente.".into())
+                }
+                SourceInput::Ndi(saved) => {
+                    let capture = NdiCapture::start(saved)?;
+                    let wake = context.clone();
+                    capture.set_waker(Arc::new(move || wake.request_repaint()));
+                    Ok(Ready {
+                        pixels: None,
+                        stream: Stream::Ndi(capture, 0),
+                    })
                 }
             })();
             if !cancellation.load(Ordering::Acquire) {
@@ -132,10 +143,16 @@ impl RuntimeSource {
         }
     }
     pub fn loading_now(&self) -> bool {
-        matches!(self.stream, Stream::Loading(_))
+        matches!(self.stream, Stream::Loading(_)) || self.waiting_ndi()
+    }
+    pub fn waiting_ndi(&self) -> bool {
+        matches!(self.stream, Stream::Ndi(..)) && self.pixels.is_none()
     }
     pub fn live(&self) -> bool {
-        matches!(self.stream, Stream::Desktop(..) | Stream::Camera(..))
+        matches!(
+            self.stream,
+            Stream::Desktop(..) | Stream::Camera(..) | Stream::Ndi(..)
+        )
     }
     pub fn poll(&mut self, ctx: &Context) -> (bool, u64, Option<String>) {
         let ready = if let Stream::Loading(pending) = &self.stream {
@@ -153,13 +170,16 @@ impl RuntimeSource {
             match result {
                 Ok(ready) => {
                     self.stream = ready.stream;
-                    self.set_pixels(ctx, ready.pixels);
+                    if let Some(pixels) = ready.pixels {
+                        self.set_pixels(ctx, pixels);
+                    }
                     return (true, 0, None);
                 }
                 Err(error) => return self.fail(error),
             }
         }
         let mut dropped = 0;
+        let mut waiting = false;
         let frame = match &mut self.stream {
             Stream::Desktop(capture, sequence) => capture.try_read(*sequence).map(|frame| {
                 frame.map(|frame| {
@@ -184,6 +204,14 @@ impl RuntimeSource {
                         }
                     })
             }),
+            Stream::Ndi(capture, sequence) => capture.latest().map(|update| {
+                waiting = update.waiting;
+                update.frame.map(|frame| {
+                    dropped = frame.sequence.saturating_sub(*sequence).saturating_sub(1);
+                    *sequence = frame.sequence;
+                    frame.pixels
+                })
+            }),
             _ => Ok(None),
         };
         match frame {
@@ -191,7 +219,14 @@ impl RuntimeSource {
                 self.set_pixels(ctx, pixels);
                 (true, dropped, None)
             }
-            Ok(None) => (false, 0, None),
+            Ok(None) => {
+                let changed = waiting && self.pixels.is_some();
+                if waiting {
+                    self.pixels = None;
+                    self.texture = None;
+                }
+                (changed, 0, None)
+            }
             Err(error) => self.fail(error),
         }
     }

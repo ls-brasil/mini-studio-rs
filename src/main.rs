@@ -6,6 +6,7 @@ mod composition;
 mod image_source;
 mod multiview;
 mod native_capture;
+mod ndi;
 mod preferences;
 mod projector;
 mod scene_ui;
@@ -131,12 +132,14 @@ enum PickerKind {
     Screen,
     Window,
     Camera,
+    Ndi,
 }
 
 #[derive(Clone)]
 enum Choice {
     Desktop(SourceKind, CaptureSource),
     Camera(CameraDevice),
+    Ndi(scenes::NdiSource),
 }
 
 impl Choice {
@@ -144,12 +147,14 @@ impl Choice {
         match self {
             Self::Desktop(_, source) => &source.name,
             Self::Camera(device) => &device.name,
+            Self::Ndi(source) => &source.name,
         }
     }
     fn detail(&self) -> &str {
         match self {
             Self::Desktop(_, source) => &source.detail,
             Self::Camera(_) => "Câmera do Windows",
+            Self::Ndi(_) => "Canal NDI da rede · somente vídeo",
         }
     }
 }
@@ -498,6 +503,8 @@ impl Studio {
             let result = match kind {
                 PickerKind::Camera => camera::list_cameras()
                     .map(|devices| devices.into_iter().map(Choice::Camera).collect()),
+                PickerKind::Ndi => ndi::list_sources()
+                    .map(|sources| sources.into_iter().map(Choice::Ndi).collect()),
                 _ => {
                     let kind = if matches!(kind, PickerKind::Screen) {
                         SourceKind::Screen
@@ -592,7 +599,11 @@ impl Studio {
                 Ok(choices) => {
                     picker.choices = choices;
                     picker.message = if picker.choices.is_empty() {
-                        "Nenhuma fonte disponível."
+                        if matches!(picker.kind, PickerKind::Ndi) {
+                            "Nenhum canal NDI encontrado. Ligue o transmissor na mesma rede e clique em Atualizar lista."
+                        } else {
+                            "Nenhuma fonte disponível."
+                        }
                     } else {
                         "Selecione uma fonte."
                     }
