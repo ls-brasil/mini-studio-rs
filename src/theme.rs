@@ -25,6 +25,7 @@ pub enum Icon {
     Play,
     Stop,
     Settings,
+    Fit,
     Help,
     Close,
     Grid,
@@ -352,6 +353,18 @@ pub fn paint_icon(p: &Painter, icon: Icon, r: Rect, color: Color32) {
         }
         Icon::Stop => {
             p.rect_filled(Rect::from_min_max(pt(5.0, 5.0), pt(19.0, 19.0)), 2, color);
+        }
+        Icon::Fit => {
+            for (x, y, dx, dy) in [
+                (3.0, 3.0, 1.0, 1.0),
+                (21.0, 3.0, -1.0, 1.0),
+                (3.0, 21.0, 1.0, -1.0),
+                (21.0, 21.0, -1.0, -1.0),
+            ] {
+                line((x, y), (x + 5.0 * dx, y));
+                line((x, y), (x, y + 5.0 * dy));
+            }
+            box_(7.0, 7.0, 10.0, 10.0);
         }
         Icon::Settings => {
             for (y, x) in [(5.0, 9.0), (12.0, 16.0), (19.0, 7.0)] {

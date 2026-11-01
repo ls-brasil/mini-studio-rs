@@ -304,6 +304,11 @@ impl Studio {
                         if small_icon(ui, Icon::Settings, "Propriedades").clicked() {
                             self.properties = selected;
                         }
+                        if small_icon(ui, Icon::Fit, "Ajustar à tela").clicked()
+                            && let Some(id) = selected
+                        {
+                            self.fit_source(id);
+                        }
                         if glyph_button(ui, "↑", "Mover fonte para cima").clicked()
                             && let Some(id) = selected
                         {
@@ -613,16 +618,6 @@ impl Studio {
                         .map(|s| s.name.as_str())
                         .unwrap_or("Nenhuma fonte selecionada");
                     ui.add_sized([220.0, 28.0], Label::new(muted(name)).truncate());
-                    ui.add_enabled_ui(self.selected.is_some(), |ui| {
-                        if ui.button("Propriedades").clicked() {
-                            self.properties = self.selected;
-                        }
-                        if ui.button("Ajustar à tela").clicked()
-                            && let Some(id) = self.selected
-                        {
-                            self.fit_source(id);
-                        }
-                    });
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         ui.label(muted("Alças: tamanho · Alt: recorte · Shift: livre"))
                             .on_hover_text("Arraste a fonte para mover. Ctrl desativa o encaixe. Clique direito para mais opções. Ctrl+Z desfaz o enquadramento.");
