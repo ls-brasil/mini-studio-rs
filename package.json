@@ -1,6 +1,6 @@
 {
   "name": "mini-studio-rs",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "private": true,
   "type": "module",
   "scripts": {
