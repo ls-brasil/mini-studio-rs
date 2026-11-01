@@ -664,7 +664,8 @@ impl Studio {
             self.count_frame();
         }
         if !errors.is_empty() {
-            self.show_error(errors.join(" "));
+            self.notice = errors.join(" ");
+            self.notice_error = false;
         }
         if let Some(output) = &self.virtual_camera {
             self.virtual_notice = output.status();

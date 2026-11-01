@@ -661,16 +661,8 @@ impl Studio {
                                         .wrap(),
                                     );
                                     ui.horizontal_wrapped(|ui| {
-                                        if ui
-                                            .small_button(if error.is_some() {
-                                                "Reconectar"
-                                            } else {
-                                                "Retomar"
-                                            })
-                                            .clicked()
-                                        {
-                                            self.runtimes.remove(&source.id);
-                                            self.activate_source(ctx, source.id);
+                                        if error.is_some() {
+                                            ui.label(muted("Reconectando automaticamente…"));
                                         }
                                         let image = matches!(source.input, SourceInput::Image(_));
                                         if ui
@@ -808,23 +800,6 @@ impl Studio {
                         self.projector.open = false;
                     }
                 });
-                let missing = self.current_scene().sources.iter().any(|s| {
-                    self.runtimes
-                        .get(&s.id)
-                        .is_none_or(|r| r.borrow().error.is_some())
-                });
-                if missing
-                    && button(
-                        ui,
-                        Icon::Refresh,
-                        "Reconectar fontes",
-                        ButtonKind::Quiet,
-                        ui.available_width(),
-                    )
-                    .clicked()
-                {
-                    self.activate_scene(ctx);
-                }
                 ui.label(muted("720p · 30 FPS · Vídeo sem áudio"));
             });
     }
@@ -928,7 +903,6 @@ impl Studio {
                             Button::new("Escolher outra fonte"),
                         )
                         .clicked();
-                    activate |= ui.button("Reconectar").clicked();
                 });
                 ui.separator();
                 ui.label(muted("Nome e captura são compartilhados entre cenas. Enquadramento e aparência pertencem a este uso."));
@@ -1065,8 +1039,8 @@ impl Studio {
                 )
             } else {
                 (
-                    "Fonte indisponível",
-                    "Confira a origem ou use Reconectar na lista de fontes",
+                    "Aguardando fonte…",
+                    "A reconexão é automática assim que a origem estiver disponível",
                 )
             };
             painter.text(
@@ -1481,7 +1455,7 @@ impl Studio {
                 ui.horizontal(|ui|{section(ui,"ATALHOS");ui.label(muted("Ctrl+O  Imagem     Ctrl+S  Cena     Ctrl+Shift+S  PNG     Del  Remover"));});
                 ui.add_space(4.0);section(ui,"TAMANHO DA INTERFACE");
                 ui.horizontal(|ui| {for scale in [0.9,1.0,1.1,1.25]{if ui.selectable_label((self.scale-scale).abs()<0.01,format!("{:.0}%",scale*100.0)).clicked(){self.scale=scale;ctx.set_zoom_factor(scale);}}});
-                ui.label(muted("Cenas e ajustes são salvos automaticamente. Ao reabrir e ao trocar de cena, suas fontes iniciam automaticamente. Se uma origem estiver indisponível, confira a conexão ou use Reconectar."));
+                ui.label(muted("Cenas e ajustes são salvos automaticamente. Ao reabrir e ao trocar de cena, suas fontes iniciam automaticamente. Se uma origem estiver indisponível, o aplicativo tenta reconectar automaticamente."));
             });});
             if close || result.should_close() {
                 self.help_open = false;
@@ -1823,7 +1797,7 @@ mod tests {
             h.frame(vec![]);
         }
         assert!(Rc::ptr_eq(&runtime, &h.app.runtimes[&id]));
-        assert!(h.controls.contains_key("Reconectar"));
+        assert!(!h.controls.contains_key("Reconectar"));
         h.app.stop_all();
         h.frame(vec![]);
         assert!(h.app.runtimes.is_empty());
@@ -2063,7 +2037,6 @@ mod tests {
         for label in [
             "Fechar propriedades",
             "Escolher outra fonte",
-            "Reconectar",
             "Espelhar horizontalmente",
             "Concluir",
         ] {
@@ -2137,6 +2110,7 @@ mod tests {
             91,
             std::rc::Rc::new(std::cell::RefCell::new(
                 crate::source_runtime::RuntimeSource {
+                    retry: Default::default(),
                     pixels: None,
                     texture: None,
                     stream: crate::source_runtime::Stream::Offline,
@@ -2145,7 +2119,7 @@ mod tests {
             )),
         );
         h.frame(vec![]);
-        assert!(h.controls.contains_key("Reconectar"));
+        assert!(!h.controls.contains_key("Reconectar"));
         assert!(!h.controls.contains_key("Retomar"));
         assert!(!h.controls.contains_key("Usar modelo"));
         h.click("Escolher outra");
@@ -2190,6 +2164,7 @@ mod tests {
         ];
         h.app.scenes.active = 0;
         let runtime = Rc::new(RefCell::new(RuntimeSource {
+            retry: Default::default(),
             pixels: None,
             texture: None,
             stream: Stream::Offline,
@@ -2619,7 +2594,8 @@ mod tests {
             h.frame(vec![]);
             std::thread::sleep(Duration::from_millis(5));
         }
-        assert!(h.app.notice_error);
+        assert!(h.app.runtimes.values().all(|r| r.borrow().error.is_some()));
+        assert!(!h.app.notice_error);
         assert_eq!(h.app.current_scene().sources.len(), 2);
         assert!(h.app.scene().sources.is_empty());
     }

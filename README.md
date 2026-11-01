@@ -30,9 +30,9 @@ Cada cena guarda uma lista ordenada de usos das fontes da biblioteca, com visibi
 - As alterações das cenas são salvas automaticamente e ao fechar o aplicativo. **Ctrl+S** permite gravar imediatamente. **Salvar imagem** exporta PNG.
 - No menu **•••** de Cenas, renomeie ou duplique. A lixeira exclui a cena selecionada; a última cena é mantida.
 - Para repetir uma fonte na composição, selecione-a e use **+ → Duplicar fonte selecionada** ou **Ctrl+D**. As duas camadas têm ajustes independentes e compartilham a captura do dispositivo.
-- Ao reabrir o aplicativo ou trocar de cena, as fontes da cena ativa iniciam automaticamente. Se uma origem falhar, a lista oferece **Reconectar** e a substituição do arquivo ou dispositivo, mantendo o enquadramento. As propriedades continuam disponíveis para nome, espelhamento e opacidade.
+- Ao reabrir o aplicativo ou trocar de cena, as fontes da cena ativa iniciam automaticamente. Se uma origem falhar, o aplicativo faz novas buscas e recria a captura automaticamente, com intervalos entre 2 e 5 segundos após cada falha. É possível substituir a origem, mantendo o enquadramento. As propriedades continuam disponíveis para nome, espelhamento e opacidade.
 
-As cenas ficam em `%LOCALAPPDATA%\MiniStudioRS\scenes.json`. A estrutura anterior é migrada para a lista de fontes, preservando os nomes, referências e visibilidade. Imagens são referenciadas pelo caminho original: mantenha os arquivos nesse local. Telas e janelas são localizadas novamente pelo nome; se o título mudar ou houver mais de uma correspondência, selecione a fonte outra vez.
+As cenas ficam em `%LOCALAPPDATA%\MiniStudioRS\scenes.json`. A estrutura anterior é migrada para a lista de fontes, preservando os nomes, referências e visibilidade. Imagens são referenciadas pelo caminho original: mantenha os arquivos nesse local. Janelas selecionadas são acompanhadas pelo identificador, mesmo quando o título muda. Quando uma janela é recriada, a busca usa o título e o aplicativo; se o título também mudou, só usa o aplicativo quando há uma única candidata identificável. Correspondências ambíguas continuam sendo verificadas, sem escolher uma janela ao acaso.
 
 ### Biblioteca de fontes (2.0)
 

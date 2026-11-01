@@ -21,7 +21,7 @@ Dê dois cliques na fonte para abrir suas propriedades.
 A saída tem 1280 x 720 pixels.
 As guias e bordas de seleção não aparecem no arquivo ou na câmera.
 As cenas são salvas automaticamente. Ao reabrir ou trocar de cena, suas fontes iniciam automaticamente.
-Se uma origem estiver indisponível, use Reconectar ou escolha outro arquivo/dispositivo.
+Se uma origem estiver indisponível, o aplicativo repete a busca e recria a captura automaticamente, em intervalos de 2 a 5 segundos após cada falha. Não é necessário reconectar manualmente.
 
 IMAGENS
 Abra PNG ou JPEG, ou arraste um arquivo para o Mini Studio. A transparência

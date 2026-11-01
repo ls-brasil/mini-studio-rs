@@ -23,16 +23,50 @@ impl DesktopSource {
         &self,
         sources: Vec<crate::native_capture::CaptureSource>,
     ) -> Option<crate::native_capture::CaptureSource> {
-        let mut matches = sources.into_iter().filter(|source| {
-            source.name == self.name
-                && (!self.window
-                    || source.detail.split(" · ").next() == self.detail.split(" · ").next())
-        });
+        let app = self.detail.split(" · ").next().unwrap_or("");
+        let same_app = |source: &&crate::native_capture::CaptureSource| {
+            !self.window || source.detail.split(" · ").next() == Some(app)
+        };
         if let Some(id) = self.selected_id {
-            return matches.find(|source| source.id == id);
+            // A title is mutable (editors, browsers); the selected live window is not.
+            if let Some(source) = sources
+                .iter()
+                .filter(same_app)
+                .find(|source| source.id == id)
+            {
+                return Some(source.clone());
+            }
+            if matches!(
+                app,
+                "Aplicativo" | "Application Frame Host" | "ApplicationFrameHost"
+            ) {
+                return None;
+            }
+            // The window may have been recreated: resolve its saved identity again.
         }
-        match (matches.next(), matches.next()) {
-            (Some(source), None) => Some(source),
+        let mut exact = sources
+            .iter()
+            .filter(same_app)
+            .filter(|source| source.name == self.name);
+        match (exact.next(), exact.next()) {
+            (Some(source), None) => return Some(source.clone()),
+            (Some(_), Some(_)) => return None,
+            _ => {}
+        }
+        // On restore, follow a renamed window only when the application is identifiable
+        // and has exactly one candidate. Never guess among windows of a host process.
+        if !self.window
+            || app.is_empty()
+            || matches!(
+                app,
+                "Aplicativo" | "Application Frame Host" | "ApplicationFrameHost"
+            )
+        {
+            return None;
+        }
+        let mut candidates = sources.iter().filter(same_app);
+        match (candidates.next(), candidates.next()) {
+            (Some(source), None) => Some(source.clone()),
             _ => None,
         }
     }
@@ -422,6 +456,50 @@ impl LegacyScene {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn window_recovery_handles_title_and_handle_changes_without_guessing() {
+        use crate::native_capture::CaptureSource;
+        let mut saved = DesktopSource {
+            selected_id: Some(20),
+            window: true,
+            capture_cursor: true,
+            name: "Projeto - Visual Studio Code".into(),
+            detail: "Code · 800 × 600".into(),
+        };
+        let renamed = CaptureSource {
+            id: 20,
+            name: "arquivo.rs - Projeto - Visual Studio Code".into(),
+            detail: "Code · 1200 × 800".into(),
+        };
+        assert_eq!(saved.resolve(vec![renamed.clone()]).unwrap().id, 20);
+        let reopened = CaptureSource {
+            id: 40,
+            ..renamed.clone()
+        };
+        assert_eq!(saved.resolve(vec![reopened.clone()]).unwrap().id, 40);
+        saved.selected_id = None;
+        assert_eq!(saved.resolve(vec![reopened.clone()]).unwrap().id, 40);
+        assert!(
+            saved
+                .resolve(vec![
+                    reopened.clone(),
+                    CaptureSource {
+                        id: 50,
+                        ..renamed.clone()
+                    }
+                ])
+                .is_none()
+        );
+        assert!(
+            saved
+                .resolve(vec![CaptureSource {
+                    detail: "Outro aplicativo · 800 × 600".into(),
+                    ..reopened
+                }])
+                .is_none()
+        );
+    }
+
     #[test]
     fn shared_library_keeps_layout_local_and_survives_removing_all_uses() {
         let old = br#"{"version":2,"active":0,"scenes":[{"name":"Cena","sources":[{"id":1,"name":"Tela","input":{"Desktop":{"window":false,"name":"Tela","detail":"Monitor"}},"visible":true,"locked":false,"transform":{}}]}]}"#;

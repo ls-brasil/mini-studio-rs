@@ -38,7 +38,15 @@ struct Ready {
     stream: Stream,
 }
 
+#[derive(Clone, Default)]
+pub(crate) struct RetryState {
+    input: Option<SourceInput>,
+    next: Option<Instant>,
+    delay: Duration,
+}
+
 pub struct RuntimeSource {
+    pub(crate) retry: RetryState,
     pub pixels: Option<Pixels>,
     pub texture: Option<TextureHandle>,
     pub stream: Stream,
@@ -52,9 +60,11 @@ impl RuntimeSource {
             texture: Some(texture),
             stream: Stream::Image,
             error: None,
+            retry: RetryState::default(),
         }
     }
     pub fn loading(ctx: &Context, input: SourceInput) -> Self {
+        let retry_input = input.clone();
         let (sender, receiver) = mpsc::channel();
         let cancelled = Arc::new(AtomicBool::new(false));
         let cancellation = cancelled.clone();
@@ -75,7 +85,7 @@ impl RuntimeSource {
                         .resolve(native_capture::list_sources(kind)?)
                         .ok_or_else(|| {
                             format!(
-                                "‘{}’ indisponível ou ambígua. Escolha a fonte novamente.",
+                                "Aguardando ‘{}’ ficar disponível e ser identificada sem ambiguidade.",
                                 saved.name
                             )
                         })?;
@@ -115,7 +125,7 @@ impl RuntimeSource {
                         }
                         std::thread::sleep(Duration::from_millis(10));
                     }
-                    Err("A câmera não respondeu. Confira o dispositivo e tente novamente.".into())
+                    Err("A câmera não respondeu. A reconexão será automática.".into())
                 }
                 SourceInput::Ndi(saved) => {
                     let capture = NdiCapture::start(saved)?;
@@ -140,6 +150,10 @@ impl RuntimeSource {
                 cancelled,
             }),
             error: None,
+            retry: RetryState {
+                input: Some(retry_input),
+                ..Default::default()
+            },
         }
     }
     pub fn loading_now(&self) -> bool {
@@ -155,6 +169,20 @@ impl RuntimeSource {
         )
     }
     pub fn poll(&mut self, ctx: &Context) -> (bool, u64, Option<String>) {
+        if matches!(self.stream, Stream::Offline)
+            && let Some(next) = self.retry.next
+        {
+            if Instant::now() >= next {
+                if let Some(input) = self.retry.input.clone() {
+                    let mut retry = self.retry.clone();
+                    retry.next = None;
+                    *self = Self::loading(ctx, input);
+                    self.retry = retry;
+                }
+            } else {
+                ctx.request_repaint_after(next.saturating_duration_since(Instant::now()));
+            }
+        }
         let ready = if let Stream::Loading(pending) = &self.stream {
             match pending.receiver.try_recv() {
                 Ok(result) => Some(result),
@@ -169,13 +197,15 @@ impl RuntimeSource {
         if let Some(result) = ready {
             match result {
                 Ok(ready) => {
+                    self.retry.delay = Duration::ZERO;
+                    self.retry.next = None;
                     self.stream = ready.stream;
                     if let Some(pixels) = ready.pixels {
                         self.set_pixels(ctx, pixels);
                     }
                     return (true, 0, None);
                 }
-                Err(error) => return self.fail(error),
+                Err(error) => return self.fail(ctx, error),
             }
         }
         let mut dropped = 0;
@@ -227,14 +257,20 @@ impl RuntimeSource {
                 }
                 (changed, 0, None)
             }
-            Err(error) => self.fail(error),
+            Err(error) => self.fail(ctx, error),
         }
     }
-    fn fail(&mut self, error: String) -> (bool, u64, Option<String>) {
+    fn fail(&mut self, ctx: &Context, error: String) -> (bool, u64, Option<String>) {
         self.stream = Stream::Offline;
         self.pixels = None;
         self.texture = None;
         self.error = Some(error.clone());
+        if self.retry.input.is_some() {
+            self.retry.delay =
+                (self.retry.delay * 2).clamp(Duration::from_secs(2), Duration::from_secs(5));
+            self.retry.next = Some(Instant::now() + self.retry.delay);
+            ctx.request_repaint_after(self.retry.delay);
+        }
         (false, 0, Some(error))
     }
     fn set_pixels(&mut self, ctx: &Context, pixels: Pixels) {
@@ -257,5 +293,52 @@ impl RuntimeSource {
         }
         self.pixels = Some(pixels);
         self.error = None;
+    }
+}
+
+#[cfg(test)]
+mod recovery_tests {
+    use super::*;
+
+    #[test]
+    fn missing_source_is_reopened_automatically_when_it_returns() {
+        let path =
+            std::env::temp_dir().join(format!("mini-studio-recovery-{}.png", std::process::id()));
+        if path.exists() {
+            std::fs::remove_file(&path).unwrap();
+        }
+        let ctx = Context::default();
+        let mut runtime = RuntimeSource::loading(&ctx, SourceInput::Image(path.clone()));
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while runtime.error.is_none() {
+            runtime.poll(&ctx);
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let scheduled = runtime.retry.next.unwrap();
+        for _ in 0..10 {
+            runtime.poll(&ctx);
+        }
+        assert!(matches!(runtime.stream, Stream::Offline));
+        assert_eq!(runtime.retry.next, Some(scheduled));
+        assert_eq!(runtime.retry.delay, Duration::from_secs(2));
+        image::RgbaImage::from_pixel(2, 2, image::Rgba([10_u8, 20, 30, 255]))
+            .save(&path)
+            .unwrap();
+        runtime.retry.next = Some(Instant::now()); // Advance the retry deadline without sleeping.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while runtime.pixels.is_none() {
+            runtime.poll(&ctx);
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(runtime.error.is_none());
+        assert_eq!(
+            &runtime.pixels.as_ref().unwrap().rgba[..4],
+            &[10, 20, 30, 255]
+        );
+        assert_eq!(runtime.retry.delay, Duration::ZERO);
+        assert!(runtime.retry.next.is_none());
+        std::fs::remove_file(path).unwrap();
     }
 }
