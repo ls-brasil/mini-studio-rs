@@ -2,6 +2,10 @@
 
 ## Em desenvolvimento
 
+- Configuração da biblioteca com prévia visual à direita para mover, redimensionar, recortar com Alt, espelhar, ajustar opacidade e restaurar o enquadramento. As edições aplicam-se a todos os usos da fonte nas cenas, inclusive ocultos ou bloqueados; novos usos recebem o enquadramento salvo na biblioteca.
+- Validação: 55 testes passaram, sete testes dependentes de dispositivos/componentes externos permaneceram ignorados, Clippy sem avisos e compilação debug concluída. Testes de interação em 800×600 e 1440×900 cobrem propagação, desfazer/refazer e novos usos; persistência de fonte sem uso e conferência visual da tela no aplicativo também verificadas.
+- Prévia disponível também para fontes ainda sem uso, com reaproveitamento da captura existente quando disponível. Desfazer/refazer da biblioteca restaura os enquadramentos anteriores por uso durante a sessão de edição; a edição direta nas cenas continua individual. README e guia atualizados.
+
 - Validação da recuperação: 53 testes passaram e Clippy passou sem avisos. Inclui reabertura de arquivo que reaparece e regras de identidade para título/identificador de janela alterados; sete testes dependentes de dispositivos ou componentes externos permanecem ignorados.
 - Recuperação ativa das fontes: após uma falha, novas buscas e aberturas ocorrem em segundo plano, com intervalos de 2 a 5 segundos, sem depender de uma notificação da sessão antiga. Usos compartilhados mantêm a mesma sessão de recuperação; botões de reconexão manual removidos.
 - Captura de janela acompanha mudanças de título pelo identificador e procura uma janela recriada pelo título/aplicativo. A busca pelo aplicativo exige uma candidata única e não usa processos hospedeiros genéricos; ambiguidades não selecionam outra janela arbitrariamente.

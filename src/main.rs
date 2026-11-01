@@ -11,6 +11,7 @@ mod preferences;
 mod projector;
 mod scene_ui;
 mod scenes;
+mod source_editor;
 mod source_runtime;
 mod studio_ui;
 mod theme;
@@ -174,6 +175,7 @@ struct Studio {
     sources_stopped: bool,
     library_target: Option<u64>,
     library_edit: Option<u64>,
+    library_preview: Option<source_editor::LibraryPreview>,
     scenes_load_error: Option<String>,
     scene_dialog: Option<scene_ui::SceneDialog>,
     runtimes: HashMap<Source, Rc<RefCell<RuntimeSource>>>,
@@ -257,6 +259,7 @@ impl Studio {
             sources_stopped: false,
             library_target: None,
             library_edit: None,
+            library_preview: None,
             scenes_load_error: None,
             scene_dialog: None,
             runtimes: HashMap::new(),

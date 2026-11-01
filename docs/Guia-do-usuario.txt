@@ -77,5 +77,7 @@ pela internet, captura áudio nem oferece múltiplas cenas nesta versão.
 
 BIBLIOTECA DE FONTES — 2.0
 No lado esquerdo do rodapé, use + para escolher o tipo de fonte. Clique na engrenagem para editar nome e origem na área principal, fora da lista; Voltar à prévia retorna à composição. Arraste a fonte sobre uma cena à direita para reutilizá-la, inclusive em cenas que não estão selecionadas. A cena de destino recebe uma camada com enquadramento próprio. A mesma fonte pode aparecer em várias cenas, com posição e tamanho independentes.
+Na configuração da biblioteca, edite visualmente a fonte na prévia à direita. Arraste para mover; alças ajustam tamanho; Alt recorta e Shift libera a proporção. Use os controles acima para espelhar, alterar opacidade, ajustar à tela e desfazer/refazer. Esta edição aplica o enquadramento a todas as cenas que usam a fonte, inclusive usos ocultos ou bloqueados, e aos novos usos. Também funciona antes de adicionar a fonte a uma cena.
+
 Nome e captura afetam todos os usos. Recorte, espelhamento, opacidade, visibilidade, bloqueio e ordem são individuais. Duplicar mantém o vínculo; Criar cópia independente cria outra fonte na biblioteca.
-Remover da cena mantém a fonte cadastrada. Exclua da biblioteca somente após remover seus usos. Fontes sem uso não iniciam captura. Cenas antigas são migradas preservando as configurações; o formato 3 não é compatível com versões anteriores.
+Remover da cena mantém a fonte cadastrada. Exclua da biblioteca somente após remover seus usos. Fontes sem uso só iniciam captura ao abrir sua prévia de configuração. Cenas antigas são migradas preservando as configurações; o formato 3 não é compatível com versões anteriores.

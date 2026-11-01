@@ -121,6 +121,8 @@ impl SourceInput {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SourceDefinition {
+    #[serde(default)]
+    pub transform: Transform,
     pub id: u64,
     pub name: String,
     pub input: SourceInput,
@@ -185,6 +187,7 @@ impl SceneLibrary {
                     item.source_id = next;
                     next += 1;
                     self.sources.push(SourceDefinition {
+                        transform: Transform::default(),
                         id: item.source_id,
                         name: item.name.clone(),
                         input: item.input.clone(),
@@ -291,6 +294,9 @@ impl SceneLibrary {
                     source.name = source.input.name();
                 }
             }
+        }
+        for definition in &mut library.sources {
+            definition.transform.sanitize();
         }
         library.reconcile_sources();
         library.version = 3;

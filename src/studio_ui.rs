@@ -28,6 +28,7 @@ impl Studio {
         if target == 0 {
             let id = self.scenes.sources.iter().map(|s| s.id).max().unwrap_or(0) + 1;
             self.scenes.sources.push(crate::scenes::SourceDefinition {
+                transform: Transform::default(),
                 id,
                 name: input.name(),
                 input,
@@ -125,8 +126,13 @@ impl Studio {
             });
         });
         ui.separator();
+        let area = ui.available_rect_before_wrap();
+        let settings_width = (area.width() * 0.34).clamp(230.0, 360.0);
+        let settings = Rect::from_min_size(area.min, vec2(settings_width, area.height()));
+        let preview = Rect::from_min_max(pos2(settings.right() + 16.0, area.top()), area.max);
+        ui.scope_builder(UiBuilder::new().max_rect(settings), |ui| {
         ScrollArea::vertical().id_salt("source_editor").show(ui, |ui| {
-            ui.set_max_width(760.0);
+            ui.set_max_width(settings_width);
             ui.add_space(12.0);
             ui.label(muted("Nome na biblioteca"));
             if ui.add(TextEdit::singleline(&mut definition.name).desired_width(f32::INFINITY).char_limit(80)).changed() && !definition.name.trim().is_empty() {
@@ -155,7 +161,7 @@ impl Studio {
             ui.add_space(16.0);
             ui.label(title("Utilização", 16.0));
             ui.add(Label::new(if uses.is_empty() { "Esta fonte ainda não foi adicionada a uma cena.".into() } else { format!("Usada em: {}", uses.join(", ")) }).wrap());
-            ui.label(muted("Nome e origem são compartilhados. Posição e tamanho são definidos em cada cena."));
+            ui.label(muted("Nome e origem são compartilhados. A edição visual aqui aplica o enquadramento a todos os usos, inclusive ocultos ou bloqueados."));
             ui.add_space(16.0);
             ui.horizontal_wrapped(|ui| {
                 if ui.button("Criar cópia independente").clicked() {
@@ -169,6 +175,10 @@ impl Studio {
                     self.library_edit = None;
                 }
             });
+        });
+        });
+        ui.scope_builder(UiBuilder::new().max_rect(preview), |ui| {
+            self.library_canvas(ui, ctx, id);
         });
     }
     pub(crate) fn add_library_to_scene(
@@ -199,7 +209,7 @@ impl Studio {
                 input: definition.input,
                 visible: true,
                 locked: false,
-                transform: Default::default(),
+                transform: definition.transform,
             });
         if scene_index == self.scenes.active {
             self.selected = Some(id);
@@ -227,7 +237,7 @@ impl Studio {
                         input: definition.input,
                         visible: true,
                         locked: false,
-                        transform: Default::default(),
+                        transform: definition.transform,
                     });
                 self.selected = Some(id);
                 self.activate_source(ctx, id);
@@ -1485,6 +1495,7 @@ impl Studio {
             self.help_open = !self.help_open;
         }
         if self.library_edit.is_some()
+            && !Popup::is_any_open(ctx)
             && self.picker.is_none()
             && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape))
         {
@@ -1608,6 +1619,9 @@ impl Studio {
                     self.canvas(ui, ctx);
                 }
             });
+        if self.library_edit.is_none() {
+            self.library_preview = None;
+        }
         self.properties_dialog(ctx);
         self.draw_picker(ctx);
         self.dialogs(ctx);
@@ -1803,6 +1817,106 @@ mod tests {
         assert!(h.app.runtimes.is_empty());
         h.app.activate_scene(&h.ctx);
         assert!(h.app.runtimes.contains_key(&id));
+    }
+
+    #[test]
+    fn library_visual_edits_update_all_uses_and_undo_preserves_local_layouts() {
+        for size in [vec2(800.0, 600.0), vec2(1440.0, 900.0)] {
+            let mut h = Harness::new(size);
+            let first = h.image("Fonte compartilhada", [255; 4]);
+            let unrelated = h.image("Outra fonte", [0, 255, 0, 255]);
+            let definition = h.app.source(first).unwrap().source_id;
+            let mut second = h.app.source(first).unwrap().clone();
+            second.id = h.app.allocate_source_id();
+            second.visible = false;
+            second.locked = true;
+            second.transform.x = 0.3;
+            let previous = second.transform;
+            h.app.scenes.scenes.push(crate::scenes::SavedScene {
+                name: "Outra cena".into(),
+                sources: vec![second],
+            });
+            h.click("Configurar fonte: Fonte compartilhada");
+            let canvas = h.controls["Prévia visual da fonte"];
+            assert!(Rect::from_min_size(Pos2::ZERO, size).contains_rect(canvas));
+            assert!(canvas.left() > h.controls["Alterar origem"].right());
+            h.modifiers = Modifiers::CTRL;
+            h.drag(
+                canvas.center(),
+                canvas.center() + canvas.size() * vec2(0.1, 0.1),
+            );
+            let edited = h.app.source(first).unwrap().transform;
+            assert!(
+                edited.x > 0.05,
+                "size={size:?} canvas={canvas:?} edited={edited:?}"
+            );
+            assert_eq!(h.app.scenes.scenes[1].sources[0].transform, edited);
+            assert_eq!(
+                h.app
+                    .scenes
+                    .sources
+                    .iter()
+                    .find(|s| s.id == definition)
+                    .unwrap()
+                    .transform,
+                edited
+            );
+            assert_eq!(
+                h.app.source(unrelated).unwrap().transform,
+                Transform::default()
+            );
+            h.modifiers = Modifiers::NONE;
+            h.click("Desfazer");
+            assert_eq!(h.app.source(first).unwrap().transform, Transform::default());
+            assert_eq!(h.app.scenes.scenes[1].sources[0].transform, previous);
+            h.click("Refazer");
+            assert_eq!(h.app.source(first).unwrap().transform, edited);
+            h.click("Ajustes da fonte");
+            h.click("Espelhar fonte");
+            h.frame(vec![]);
+            assert!(h.app.scenes.scenes[1].sources[0].transform.mirror);
+            h.app.add_library_to_scene(&h.ctx, 1, definition);
+            assert_eq!(
+                h.app.scenes.scenes[1].sources[1].transform,
+                h.app.source(first).unwrap().transform
+            );
+            assert_eq!(h.app.scenes.active, 0);
+            h.click("Voltar à prévia");
+            assert!(h.app.library_preview.is_none());
+        }
+    }
+
+    #[test]
+    fn unused_library_source_can_be_previewed_edited_and_saved() {
+        let folder = std::env::temp_dir().join(format!(
+            "mini-studio-library-preview-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&folder).unwrap();
+        let path = folder.join("source.png");
+        image::RgbaImage::from_pixel(16, 9, image::Rgba([20_u8, 90, 140, 255]))
+            .save(&path)
+            .unwrap();
+        let mut h = Harness::new(vec2(1440.0, 900.0));
+        h.app.library_target = Some(0);
+        h.app.accept_library_input(SourceInput::Image(path));
+        h.click("Configurar fonte: source.png");
+        h.click("Ajustes da fonte");
+        h.click("Espelhar fonte");
+        h.frame(vec![]);
+        assert!(h.app.current_scene().sources.is_empty());
+        assert!(h.app.scenes.sources[0].transform.mirror);
+        let saved = folder.join("scenes.json");
+        h.app.scenes.save(&saved).unwrap();
+        assert_eq!(
+            crate::scenes::SceneLibrary::load(&saved).unwrap().unwrap(),
+            h.app.scenes
+        );
+        h.click("Voltar à prévia");
+        assert!(h.app.library_preview.is_none());
+        std::fs::remove_file(folder.join("source.png")).unwrap();
+        std::fs::remove_file(saved).unwrap();
+        std::fs::remove_dir(folder).unwrap();
     }
 
     #[test]

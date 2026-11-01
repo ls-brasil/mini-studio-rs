@@ -36,7 +36,9 @@ As cenas ficam em `%LOCALAPPDATA%\MiniStudioRS\scenes.json`. A estrutura anterio
 
 ### Biblioteca de fontes (2.0)
 
-Em **Fontes**, à esquerda do rodapé, crie e configure telas, janelas, câmeras, canais NDI e imagens antes de montar as cenas. **Adicionar fonte da biblioteca**, na prévia vazia, ou **+** em Fontes da cena reutiliza uma fonte cadastrada; você pode adicioná-la várias vezes e em várias cenas. Fontes sem uso ficam disponíveis sem iniciar uma captura.
+Em **Fontes**, à esquerda do rodapé, crie e configure telas, janelas, câmeras, canais NDI e imagens antes de montar as cenas. **Adicionar fonte da biblioteca**, na prévia vazia, ou **+** em Fontes da cena reutiliza uma fonte cadastrada; você pode adicioná-la várias vezes e em várias cenas. Fontes sem uso ficam disponíveis sem iniciar uma captura, exceto enquanto sua prévia de configuração estiver aberta.
+
+Na engrenagem da biblioteca, a tela **Configurar fonte** mostra uma prévia editável à direita: arraste para mover, use as alças para redimensionar, Alt para recortar e Shift para tamanho livre. Espelhamento, opacidade, ajuste à tela e desfazer/refazer ficam acima da prévia. As edições feitas aqui aplicam o enquadramento a todos os usos da fonte nas cenas (inclusive ocultos ou bloqueados) e aos novos usos. Fontes ainda sem uso também podem ser preparadas nessa tela.
 
 O nome e a configuração de captura são compartilhados. Posição, tamanho, recorte, espelhamento, opacidade, visibilidade, bloqueio e ordem pertencem a cada uso na cena. Duplicar uma fonte ou cena mantém os vínculos; **Criar cópia independente**, na biblioteca, cria outra configuração.
 
