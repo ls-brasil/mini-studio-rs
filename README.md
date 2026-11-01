@@ -25,8 +25,8 @@ A prévia ocupa a parte superior. **Cenas**, **Fontes** e **Controles** ficam em
 Cada cena guarda uma lista ordenada de fontes, com nomes, visibilidade, bloqueio e transformação independentes. Não existe mais a restrição de uma fonte por tipo: uma cena pode misturar várias imagens, telas, janelas e câmeras.
 
 - Clique em uma cena para alternar. A câmera virtual continua ligada, se estiver ativa.
-- **Visualização múltipla**, no topo, abre uma segunda janela redimensionável com prévias ao vivo de todas as cenas. Clique uma vez em qualquer miniatura para trocar a cena da saída; a cena ativa fica destacada. A grade acompanha novas cenas e alterações de composição. Enquanto aberta, mantém as fontes das cenas ativas e compartilha capturas iguais; ao fechar, libera as capturas extras de tela e imagem.
-- **Salvar cena** grava imediatamente. As alterações também são salvas automaticamente e ao fechar o aplicativo. **Salvar imagem** exporta PNG.
+- **Visualização múltipla**, no painel **Controles**, abre uma segunda janela redimensionável com prévias ao vivo de todas as cenas. Clique uma vez em qualquer miniatura para trocar a cena da saída; a cena ativa fica destacada. A grade acompanha novas cenas e alterações de composição. Enquanto aberta, mantém as fontes das cenas ativas e compartilha capturas iguais; ao fechar, libera as capturas extras de tela e imagem.
+- As alterações das cenas são salvas automaticamente e ao fechar o aplicativo. **Ctrl+S** permite gravar imediatamente. **Salvar imagem** exporta PNG.
 - No menu **•••** de Cenas, renomeie ou duplique. A lixeira exclui a cena selecionada; a última cena é mantida.
 - Para repetir uma fonte na composição, selecione-a e use **+ → Duplicar fonte selecionada** ou **Ctrl+D**. As duas camadas têm ajustes independentes e compartilham a captura do dispositivo.
 - Ao reabrir o aplicativo, escolha **Ativar fontes**. Fontes indisponíveis permanecem na configuração e mostram o erro ao passar o mouse. Em Propriedades, reconecte ou escolha outro arquivo/dispositivo.
@@ -55,20 +55,20 @@ Posição, tamanho, recorte e espelhamento são salvos com cada fonte e aplicado
 - Busca no seletor de dispositivos/janelas, atualização da lista, estados de carregamento e mensagens de erro.
 - Cenas e preferências salvas por usuário. As fontes da cena são ativadas por você ao reabrir o aplicativo.
 
-| Atalho | Ação |
-| --- | --- |
-| Ctrl+O | Abrir imagem |
-| Ctrl+S | Salvar cena |
-| Ctrl+Shift+S | Exportar composição PNG |
-| Ctrl+D | Duplicar fonte selecionada |
-| Ctrl+E | Propriedades da fonte |
-| Ctrl+F | Ajustar fonte à tela |
-| Ctrl+Z / Ctrl+Y | Desfazer / refazer enquadramento na prévia |
-| Setas / Shift+setas | Mover fonte 1 / 10 pixels |
-| Del | Remover fonte selecionada |
-| F1 | Ajuda e escala da interface |
-| Esc | Fechar diálogo ou desmarcar fonte |
-| Tab / Enter / Espaço | Navegar e ativar controles |
+| Atalho               | Ação                                       |
+| -------------------- | ------------------------------------------ |
+| Ctrl+O               | Abrir imagem                               |
+| Ctrl+S               | Salvar cena                                |
+| Ctrl+Shift+S         | Exportar composição PNG                    |
+| Ctrl+D               | Duplicar fonte selecionada                 |
+| Ctrl+E               | Propriedades da fonte                      |
+| Ctrl+F               | Ajustar fonte à tela                       |
+| Ctrl+Z / Ctrl+Y      | Desfazer / refazer enquadramento na prévia |
+| Setas / Shift+setas  | Mover fonte 1 / 10 pixels                  |
+| Del                  | Remover fonte selecionada                  |
+| F1                   | Ajuda e escala da interface                |
+| Esc                  | Fechar diálogo ou desmarcar fonte          |
+| Tab / Enter / Espaço | Navegar e ativar controles                 |
 
 Áudio, gravação de vídeo e transmissão pela internet não estão disponíveis. Imagens aceitam até 32 MiB, 16 milhões de pixels e 8192 pixels por lado. A saída é fixa em 720p.
 

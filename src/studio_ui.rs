@@ -160,7 +160,6 @@ impl Studio {
                         if small_icon(ui, Icon::Help, "Ajuda").clicked() {
                             self.help_open = true;
                         }
-                        ui.toggle_value(&mut self.multiview_open, "Visualização múltipla");
                         badge(
                             ui,
                             if self.virtual_camera.as_ref().is_some_and(|o| o.active()) {
@@ -498,14 +497,18 @@ impl Studio {
                 }
                 if button(
                     ui,
-                    Icon::Save,
-                    "Salvar cena",
-                    ButtonKind::Secondary,
+                    Icon::Grid,
+                    "Visualização múltipla",
+                    if self.multiview_open {
+                        ButtonKind::Primary
+                    } else {
+                        ButtonKind::Secondary
+                    },
                     ui.available_width(),
                 )
                 .clicked()
                 {
-                    self.persist_scenes(true);
+                    self.multiview_open = !self.multiview_open;
                 }
                 let missing = self.current_scene().sources.iter().any(|s| {
                     self.runtimes

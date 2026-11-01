@@ -22,7 +22,6 @@ pub enum Icon {
     Lock,
     Unlock,
     Trash,
-    Save,
     Play,
     Stop,
     Settings,
@@ -343,11 +342,6 @@ pub fn paint_icon(p: &Painter, icon: Icon, r: Rect, color: Color32) {
             line((9.0, 3.0), (15.0, 3.0));
             line((10.0, 10.0), (10.0, 17.0));
             line((14.0, 10.0), (14.0, 17.0));
-        }
-        Icon::Save => {
-            box_(3.0, 3.0, 18.0, 18.0);
-            box_(7.0, 3.0, 10.0, 6.0);
-            box_(7.0, 14.0, 10.0, 7.0);
         }
         Icon::Play => {
             p.add(Shape::convex_polygon(
