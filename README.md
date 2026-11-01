@@ -51,6 +51,7 @@ Posição, tamanho, recorte e espelhamento são salvos com cada fonte e aplicado
 
 - Interface escura com tipografia do Windows, ícones vetoriais, controles acessíveis por teclado e painéis que se adaptam a janelas menores.
 - Composição de múltiplas telas, janelas, câmeras e imagens em 1280 × 720.
+- Captura do ponteiro do mouse configurável por fonte de tela ou janela em **Propriedades → Capturar ponteiro do mouse** (Ctrl+E), com aplicação imediata e escolha salva na cena.
 - Ordem livre das camadas, transparência PNG, opacidade, posição, tamanho, espelhamento e bloqueio por fonte.
 - Prévia, PNG e câmera virtual compartilham a mesma ordem e geometria das fontes. Guias e seleção aparecem somente no editor.
 - Saída virtual NV12 a 30 FPS, com início e parada independentes das fontes e indicação de atividade.

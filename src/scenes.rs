@@ -8,8 +8,14 @@ pub struct DesktopSource {
     #[serde(skip)]
     pub selected_id: Option<u32>,
     pub window: bool,
+    #[serde(default = "capture_cursor_default")]
+    pub capture_cursor: bool,
     pub name: String,
     pub detail: String,
+}
+
+fn capture_cursor_default() -> bool {
+    true
 }
 
 impl DesktopSource {
@@ -323,6 +329,29 @@ impl LegacyScene {
 mod tests {
     use super::*;
     #[test]
+    fn cursor_preference_defaults_on_for_old_scenes_and_round_trips_per_source() {
+        let old = br#"{"version":2,"active":0,"scenes":[{"name":"Cena","sources":[{"id":1,"name":"Tela","input":{"Desktop":{"window":false,"name":"Tela","detail":"Monitor"}},"visible":true,"locked":false,"transform":{}}]}]}"#;
+        let mut library = SceneLibrary::decode(old).unwrap();
+        let mut duplicate = library.scenes[0].sources[0].clone();
+        duplicate.id = 2;
+        let SourceInput::Desktop(desktop) = &mut duplicate.input else {
+            panic!("Esperava fonte de desktop");
+        };
+        assert!(desktop.capture_cursor);
+        desktop.capture_cursor = false;
+        desktop.window = true;
+        library.scenes[0].sources.push(duplicate);
+        let restored = SceneLibrary::decode(&serde_json::to_vec(&library).unwrap()).unwrap();
+        assert_eq!(restored, library);
+        for (source, expected) in restored.scenes[0].sources.iter().zip([true, false]) {
+            let SourceInput::Desktop(desktop) = &source.input else {
+                panic!("Esperava fonte de desktop");
+            };
+            assert_eq!(desktop.capture_cursor, expected);
+        }
+    }
+
+    #[test]
     fn old_scenes_migrate_to_ordered_sources_without_losing_names_or_visibility() {
         let old=br#"{"version":1,"active":0,"scenes":[{"name":"Aula","desktop":{"window":true,"name":"Slides","detail":"App"},"image_path":"C:/fundo.png","source_names":["Minha janela","","Fundo"],"desktop_visible":false}]}"#;
         let library = SceneLibrary::decode(old).unwrap();
@@ -370,6 +399,7 @@ mod tests {
         let saved = DesktopSource {
             selected_id: None,
             window: true,
+            capture_cursor: true,
             name: "Slides".into(),
             detail: "App · 1280 × 720".into(),
         };
@@ -388,6 +418,7 @@ mod tests {
         let saved = DesktopSource {
             selected_id: Some(20),
             window: true,
+            capture_cursor: true,
             name: "JW Library".into(),
             detail: "Application Frame Host · 894 × 1048".into(),
         };

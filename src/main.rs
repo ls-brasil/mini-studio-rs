@@ -525,11 +525,20 @@ impl Studio {
         });
     }
     fn start_desktop(&mut self, ctx: &egui::Context, kind: SourceKind, source: CaptureSource) {
+        let capture_cursor = self
+            .picker_target
+            .and_then(|id| self.source(id))
+            .and_then(|source| match &source.input {
+                SourceInput::Desktop(desktop) => Some(desktop.capture_cursor),
+                _ => None,
+            })
+            .unwrap_or(true);
         self.accept_input(
             ctx,
             SourceInput::Desktop(scenes::DesktopSource {
                 selected_id: Some(source.id),
                 window: kind == SourceKind::Window,
+                capture_cursor,
                 name: source.name,
                 detail: source.detail,
             }),

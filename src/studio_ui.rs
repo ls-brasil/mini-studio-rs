@@ -699,6 +699,11 @@ impl Studio {
                 )
                 .on_hover_text(source.input.name());
                 ui.add_space(6.0);
+                if let SourceInput::Desktop(desktop) = &mut source.input {
+                    activate |= ui
+                        .checkbox(&mut desktop.capture_cursor, "Capturar ponteiro do mouse")
+                        .changed();
+                }
                 ui.horizontal(|ui| {
                     let (rect, _) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::hover());
                     paint_icon(ui.painter(), Icon::Mirror, rect, MUTED);
@@ -720,7 +725,7 @@ impl Studio {
                             Button::new("Escolher outra fonte"),
                         )
                         .clicked();
-                    activate = ui.button("Reconectar").clicked();
+                    activate |= ui.button("Reconectar").clicked();
                 });
                 ui.separator();
                 ui.label(muted(
@@ -1541,6 +1546,55 @@ fn reveal_file(path: &Path) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn desktop_properties_toggle_cursor_without_changing_shared_source_or_geometry() {
+        use std::rc::Rc;
+
+        for window in [false, true] {
+            let mut h = Harness::new(vec2(800.0, 600.0));
+            let id = h.image("Desktop", [255; 4]);
+            h.app.source_mut(id).unwrap().input =
+                SourceInput::Desktop(crate::scenes::DesktopSource {
+                    selected_id: Some(u32::MAX),
+                    window,
+                    capture_cursor: true,
+                    name: "Fonte de teste indisponível".into(),
+                    detail: "Teste".into(),
+                });
+            let transform = h.app.source(id).unwrap().transform;
+            let mut duplicate = h.app.source(id).unwrap().clone();
+            duplicate.id = h.app.allocate_source_id();
+            let other_id = duplicate.id;
+            h.app.current_scene_mut().sources.push(duplicate);
+            let original_runtime = h.app.runtimes[&id].clone();
+            h.app.runtimes.insert(other_id, original_runtime.clone());
+            h.app.properties = Some(id);
+            h.frame(vec![]);
+            h.frame(vec![]);
+            assert!(
+                Rect::from_min_size(Pos2::ZERO, h.size)
+                    .contains_rect(h.controls["Capturar ponteiro do mouse"])
+            );
+            h.click("Capturar ponteiro do mouse");
+            for (source_id, expected) in [(id, false), (other_id, true)] {
+                let SourceInput::Desktop(desktop) = &h.app.source(source_id).unwrap().input else {
+                    panic!("Esperava fonte de desktop");
+                };
+                assert_eq!(desktop.capture_cursor, expected);
+                assert_eq!(h.app.source(source_id).unwrap().transform, transform);
+            }
+            assert!(!Rc::ptr_eq(&h.app.runtimes[&id], &original_runtime));
+            assert!(Rc::ptr_eq(&h.app.runtimes[&other_id], &original_runtime));
+            h.click("Capturar ponteiro do mouse");
+            assert_eq!(
+                h.app.source(id).unwrap().input,
+                h.app.source(other_id).unwrap().input
+            );
+            assert!(Rc::ptr_eq(&h.app.runtimes[&id], &original_runtime));
+            h.click("Concluir");
+        }
+    }
+
     #[test]
     fn compact_properties_preserve_geometry_and_fit_small_window() {
         let mut h = Harness::new(vec2(800.0, 600.0));

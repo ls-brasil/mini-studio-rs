@@ -2,6 +2,7 @@
 
 ## Em desenvolvimento
 
+- Opção de capturar ou ocultar o ponteiro do mouse nas propriedades de cada fonte de tela ou janela, salva com a cena e aplicada ao alterar.
 - Projetor de saída limpa em janela própria ou tela cheia no monitor escolhido, acompanhando a cena ativa sem guias ou controles.
 - Projeção com proporção preservada, atalhos F11/Esc e funcionamento independente da câmera virtual.
 

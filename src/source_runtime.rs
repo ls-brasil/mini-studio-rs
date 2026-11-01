@@ -77,7 +77,7 @@ impl RuntimeSource {
                                 saved.name
                             )
                         })?;
-                    let capture = CaptureSession::start(kind, source.id)?;
+                    let capture = CaptureSession::start(kind, source.id, saved.capture_cursor)?;
                     let deadline = Instant::now() + Duration::from_secs(5);
                     while !cancellation.load(Ordering::Acquire) && Instant::now() < deadline {
                         if let Some(frame) = capture.read(0)? {

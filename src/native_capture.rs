@@ -347,10 +347,16 @@ pub fn list_sources(kind: SourceKind) -> Result<Vec<CaptureSource>, String> {
 fn begin<T: TryInto<GraphicsCaptureItemType> + Send + 'static>(
     item: T,
     shared: Arc<SharedFrame>,
+    capture_cursor: bool,
 ) -> Result<CaptureControl<CaptureHandler, String>, String> {
     let settings = Settings::new(
         item,
-        CursorCaptureSettings::Default,
+        if capture_cursor {
+            // O padrão inclui o cursor e preserva o suporte ao Windows 10 1903.
+            CursorCaptureSettings::Default
+        } else {
+            CursorCaptureSettings::WithoutCursor
+        },
         DrawBorderSettings::Default,
         SecondaryWindowSettings::Default,
         MinimumUpdateIntervalSettings::Default,
@@ -370,7 +376,7 @@ pub struct CaptureSession {
 }
 
 impl CaptureSession {
-    pub fn start(kind: SourceKind, id: u32) -> Result<Self, String> {
+    pub fn start(kind: SourceKind, id: u32, capture_cursor: bool) -> Result<Self, String> {
         let shared = Arc::new(SharedFrame::default());
         let control = match kind {
             SourceKind::Screen => {
@@ -379,7 +385,7 @@ impl CaptureSession {
                     .into_iter()
                     .find(|monitor| monitor.as_raw_hmonitor() as usize as u32 == id)
                     .ok_or("A tela foi desconectada. Selecione outra fonte.")?;
-                begin(monitor, shared.clone())?
+                begin(monitor, shared.clone(), capture_cursor)?
             }
             SourceKind::Window => {
                 let window = Window::enumerate()
@@ -390,7 +396,7 @@ impl CaptureSession {
                 if window.process_id().ok() == Some(std::process::id()) {
                     return Err("Selecione a janela de outro aplicativo.".into());
                 }
-                begin(window, shared.clone())?
+                begin(window, shared.clone(), capture_cursor)?
             }
         };
         Ok(Self {
@@ -527,12 +533,13 @@ mod tests {
             let saved = crate::scenes::DesktopSource {
                 selected_id: Some(source.id),
                 window: true,
+                capture_cursor: true,
                 name: source.name.clone(),
                 detail: source.detail.clone(),
             };
             let resolved = saved.resolve(sources.clone()).unwrap();
             assert_eq!(resolved.id, source.id);
-            let session = CaptureSession::start(SourceKind::Window, resolved.id).unwrap();
+            let session = CaptureSession::start(SourceKind::Window, resolved.id, true).unwrap();
             let deadline = Instant::now() + Duration::from_secs(5);
             let frame = loop {
                 if let Some(frame) = session.read(0).unwrap() {
@@ -567,7 +574,7 @@ mod tests {
                 monitor.as_raw_hmonitor() as usize as u32,
             )
         };
-        let session = CaptureSession::start(kind, source_id).unwrap();
+        let session = CaptureSession::start(kind, source_id, true).unwrap();
         let start = Instant::now();
         let mut sequence = 0;
         let mut count = 0;
