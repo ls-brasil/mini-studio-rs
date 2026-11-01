@@ -582,6 +582,29 @@ impl Studio {
                 {
                     self.multiview_open = !self.multiview_open;
                 }
+                ui.horizontal(|ui| {
+                    let reserve = if self.projector.open { 36.0 } else { 0.0 };
+                    if button(
+                        ui,
+                        Icon::Monitor,
+                        "Projetor de saída",
+                        if self.projector.open {
+                            ButtonKind::Primary
+                        } else {
+                            ButtonKind::Secondary
+                        },
+                        (ui.available_width() - reserve).max(1.0),
+                    )
+                    .clicked()
+                    {
+                        self.projector.choose_destination();
+                    }
+                    if self.projector.open
+                        && small_icon(ui, Icon::Close, "Fechar projetor").clicked()
+                    {
+                        self.projector.open = false;
+                    }
+                });
                 let missing = self.current_scene().sources.iter().any(|s| {
                     self.runtimes
                         .get(&s.id)
@@ -776,31 +799,7 @@ impl Studio {
                 ),
             )
         };
-        for layer in &layers {
-            let area = convert(layer.rect);
-            if let Some(id) = layer.source
-                && let Some(runtime) = self.runtimes.get(&id)
-                && let Some(texture) = &runtime.borrow().texture
-            {
-                let [left, top, right, bottom] = layer.uv;
-                let uv = Rect::from_min_max(
-                    pos2(if layer.mirror { right } else { left }, top),
-                    pos2(if layer.mirror { left } else { right }, bottom),
-                );
-                painter.image(
-                    texture.id(),
-                    area,
-                    uv,
-                    Color32::from_white_alpha(layer.opacity),
-                );
-            } else {
-                painter.rect_filled(
-                    area,
-                    0,
-                    Color32::from_rgb(layer.color[0], layer.color[1], layer.color[2]),
-                );
-            }
-        }
+        self.paint_scene(&painter, rect, &scene);
         if !self.has_sources() {
             let content = Rect::from_center_size(
                 outer.center(),
@@ -1320,6 +1319,7 @@ impl Studio {
             || self.properties.is_some()
             || self.help_open
             || self.setup_open
+            || self.projector.dialog_open
             || ctx.wants_keyboard_input()
         {
             return;
@@ -1425,7 +1425,9 @@ impl Studio {
         self.draw_picker(ctx);
         self.dialogs(ctx);
         self.scene_dialogs(ctx);
+        self.projector_dialog(ctx);
         self.multiview(ctx);
+        self.projector(ctx);
         if let Some(output) = &self.virtual_camera {
             output.update(self.scene());
         }
@@ -1881,6 +1883,30 @@ mod tests {
         assert!(Rc::ptr_eq(&h.app.runtimes[&first], &first_runtime));
         assert!(!h.app.runtimes.contains_key(&second));
         h.app.stop_all();
+    }
+
+    #[test]
+    fn projector_destination_blocks_editing_and_opens_without_virtual_camera() {
+        let mut h = Harness::new(vec2(1440.0, 900.0));
+        let id = h.image("Projetor", [255, 0, 0, 255]);
+        h.click("Projetor de saída");
+        assert!(h.app.projector.dialog_open);
+        h.frame(vec![Event::Key {
+            key: Key::Delete,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        }]);
+        assert!(h.app.source(id).is_some());
+        h.click("Abrir em janela");
+        assert!(h.app.projector.open);
+        assert!(!h.app.projector.dialog_open);
+        assert!(h.app.virtual_camera.is_none());
+        assert_eq!(h.app.scenes.active, 0);
+        h.click("Fechar projetor");
+        assert!(!h.app.projector.open);
+        assert!(h.app.runtimes.contains_key(&id));
     }
 
     #[test]

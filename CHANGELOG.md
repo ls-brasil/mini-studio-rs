@@ -1,5 +1,10 @@
 # Histórico de versões
 
+## Em desenvolvimento
+
+- Projetor de saída limpa em janela própria ou tela cheia no monitor escolhido, acompanhando a cena ativa sem guias ou controles.
+- Projeção com proporção preservada, atalhos F11/Esc e funcionamento independente da câmera virtual.
+
 ## 1.0.3 — 31/10/2026
 
 - Removidos os botões de Propriedades e Ajustar à tela da faixa abaixo da prévia.

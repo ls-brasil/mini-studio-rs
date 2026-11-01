@@ -1,8 +1,4 @@
-use crate::{
-    Studio,
-    composition::{HEIGHT, WIDTH},
-    theme::*,
-};
+use crate::{Studio, theme::*};
 use eframe::egui::*;
 use std::{collections::HashSet, time::Duration};
 
@@ -94,46 +90,7 @@ impl Studio {
                         let active = index == self.scenes.active;
                         let canvas = Rect::from_min_size(tile.min, vec2(width, width * 9.0 / 16.0));
                         let painter = ui.painter_at(canvas);
-                        for layer in self.scene_composition(saved).layers() {
-                            let [x, y, w, h] = layer.rect;
-                            let area = Rect::from_min_size(
-                                canvas.min
-                                    + vec2(
-                                        x / WIDTH as f32 * width,
-                                        y / HEIGHT as f32 * canvas.height(),
-                                    ),
-                                vec2(
-                                    w / WIDTH as f32 * width,
-                                    h / HEIGHT as f32 * canvas.height(),
-                                ),
-                            );
-                            if let Some(id) = layer.source {
-                                if let Some(runtime) = self.runtimes.get(&id)
-                                    && let Some(texture) = &runtime.borrow().texture
-                                {
-                                    let [l, t, r, b] = layer.uv;
-                                    painter.image(
-                                        texture.id(),
-                                        area,
-                                        Rect::from_min_max(
-                                            pos2(if layer.mirror { r } else { l }, t),
-                                            pos2(if layer.mirror { l } else { r }, b),
-                                        ),
-                                        Color32::from_white_alpha(layer.opacity),
-                                    );
-                                }
-                            } else {
-                                painter.rect_filled(
-                                    area,
-                                    0,
-                                    Color32::from_rgb(
-                                        layer.color[0],
-                                        layer.color[1],
-                                        layer.color[2],
-                                    ),
-                                );
-                            }
-                        }
+                        self.paint_scene(&painter, canvas, &self.scene_composition(saved));
                         let status = if saved.sources.is_empty() {
                             "Cena vazia"
                         } else if saved.sources.iter().filter(|s| s.visible).any(|s| {

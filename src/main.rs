@@ -7,6 +7,7 @@ mod image_source;
 mod multiview;
 mod native_capture;
 mod preferences;
+mod projector;
 mod scene_ui;
 mod scenes;
 mod source_runtime;
@@ -176,6 +177,7 @@ struct Studio {
     guides: bool,
     scale: f32,
     multiview_open: bool,
+    projector: projector::Projector,
     help_open: bool,
     setup_open: bool,
     notice_error: bool,
@@ -255,6 +257,7 @@ impl Studio {
             guides: prefs.guides,
             scale: prefs.scale,
             multiview_open: false,
+            projector: projector::Projector::default(),
             help_open: options.ui_dialog.as_deref() == Some("help"),
             setup_open: options.ui_dialog.as_deref() == Some("setup"),
             notice_error: false,
