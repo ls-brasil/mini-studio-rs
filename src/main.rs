@@ -170,9 +170,12 @@ struct Picker {
 struct Studio {
     scenes: scenes::SceneLibrary,
     saved_scenes: scenes::SceneLibrary,
+    library_restarts: Vec<u64>,
+    sources_stopped: bool,
+    library_target: Option<u64>,
+    library_edit: Option<u64>,
     scenes_load_error: Option<String>,
     scene_dialog: Option<scene_ui::SceneDialog>,
-    scene_template: Option<scene_ui::TemplateSetup>,
     runtimes: HashMap<Source, Rc<RefCell<RuntimeSource>>>,
     next_source_id: u64,
     selected: Option<Source>,
@@ -250,9 +253,12 @@ impl Studio {
         let mut app = Self {
             scenes: scenes::SceneLibrary::default(),
             saved_scenes: scenes::SceneLibrary::default(),
+            library_restarts: vec![],
+            sources_stopped: false,
+            library_target: None,
+            library_edit: None,
             scenes_load_error: None,
             scene_dialog: None,
-            scene_template: None,
             runtimes: HashMap::new(),
             next_source_id: 1,
             selected: None,
@@ -299,7 +305,6 @@ impl Studio {
         if app.options.ui_dialog.as_deref() == Some("scene") {
             app.scene_dialog = Some(scene_ui::SceneDialog::Create {
                 name: "Nova cena".into(),
-                template: scene_ui::SceneTemplate::Empty,
             });
         }
         if let Some((kind, title)) = &app.options.benchmark {
@@ -383,6 +388,22 @@ impl Studio {
                 .collect(),
         }
     }
+    fn ensure_scene_sources(&mut self, ctx: &egui::Context) {
+        if self.sources_stopped {
+            return;
+        }
+        // Open missing captures once. Errors retain their runtime, avoiding a retry loop.
+        let missing: Vec<_> = self
+            .current_scene()
+            .sources
+            .iter()
+            .filter(|source| !self.runtimes.contains_key(&source.id))
+            .map(|source| source.id)
+            .collect();
+        for id in missing {
+            self.activate_source(ctx, id);
+        }
+    }
     fn activate_source(&mut self, ctx: &egui::Context, id: Source) {
         let Some(source) = self
             .scenes
@@ -414,6 +435,7 @@ impl Studio {
         let id = self.allocate_source_id();
         let name = input.name();
         self.current_scene_mut().sources.push(SavedSource {
+            source_id: 0,
             id,
             name,
             input,
@@ -427,6 +449,9 @@ impl Studio {
     }
     fn accept_input(&mut self, ctx: &egui::Context, input: SourceInput) {
         self.picker = None;
+        if self.accept_library_input(input.clone()) {
+            return;
+        }
         if let Some(id) = self.picker_target.take() {
             if let Some(source) = self.source_mut(id) {
                 source.input = input;
@@ -434,15 +459,14 @@ impl Studio {
                 self.activate_source(ctx, id);
             }
         } else {
-            let id = self.add_input(ctx, input);
-            self.accept_template_source(ctx, id);
+            self.add_input(ctx, input);
         }
     }
     fn open_image(&mut self, ctx: &egui::Context) {
+        self.library_target = None;
         self.load_image(ctx, None, None);
     }
     fn load_image(&mut self, ctx: &egui::Context, path: Option<PathBuf>, target: Option<Source>) {
-        self.cancel_scene_template();
         self.picker = None;
         self.picker_target = None;
         let (sender, receiver) = mpsc::channel();
@@ -469,6 +493,9 @@ impl Studio {
         loaded: image_source::LoadedImage,
         target: Option<Source>,
     ) {
+        if self.accept_library_input(SourceInput::Image(loaded.path.clone())) {
+            return;
+        }
         let id = if let Some(id) = target {
             let Some(source) = self.source_mut(id) else {
                 return;
@@ -478,6 +505,7 @@ impl Studio {
         } else {
             let id = self.allocate_source_id();
             self.current_scene_mut().sources.push(SavedSource {
+                source_id: 0,
                 id,
                 name: loaded.name,
                 input: SourceInput::Image(loaded.path),
@@ -496,7 +524,7 @@ impl Studio {
         self.notice = "Imagem adicionada à cena.".into();
     }
     fn open_picker(&mut self, ctx: &egui::Context, kind: PickerKind, target: Option<Source>) {
-        self.cancel_scene_template();
+        self.library_target = None;
         let (sender, receiver) = mpsc::channel();
         let context = ctx.clone();
         std::thread::spawn(move || {
@@ -587,8 +615,13 @@ impl Studio {
             let target = self.image_target.take();
             match result {
                 Ok(Some(loaded)) => self.accept_image(ctx, loaded, target),
-                Ok(None) => {}
-                Err(e) => self.show_error(e),
+                Ok(None) => {
+                    self.library_target = None;
+                }
+                Err(e) => {
+                    self.library_target = None;
+                    self.show_error(e);
+                }
             }
         }
         if let Some(picker) = &mut self.picker
@@ -667,7 +700,7 @@ impl Studio {
         }
     }
     fn clear_scene_runtime(&mut self) {
-        self.cancel_scene_template();
+        self.library_target = None;
         let retained: HashSet<_> = self
             .scenes
             .scenes
@@ -690,6 +723,7 @@ impl Studio {
         self.fps_frames = 0;
     }
     fn stop_all(&mut self) {
+        self.sources_stopped = true;
         if let Some(output) = &self.virtual_camera {
             output.stop();
         }

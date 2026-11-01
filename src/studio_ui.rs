@@ -14,6 +14,227 @@ use std::{
 };
 
 impl Studio {
+    pub(crate) fn sync_library(&mut self) {
+        for id in self.scenes.reconcile_sources() {
+            if self.runtimes.remove(&id).is_some() {
+                self.library_restarts.push(id);
+            }
+        }
+    }
+    pub(crate) fn accept_library_input(&mut self, input: SourceInput) -> bool {
+        let Some(target) = self.library_target.take() else {
+            return false;
+        };
+        if target == 0 {
+            let id = self.scenes.sources.iter().map(|s| s.id).max().unwrap_or(0) + 1;
+            self.scenes.sources.push(crate::scenes::SourceDefinition {
+                id,
+                name: input.name(),
+                input,
+            });
+        } else if let Some(definition) = self.scenes.sources.iter_mut().find(|s| s.id == target) {
+            definition.input = input;
+            let definition = definition.clone();
+            for item in self
+                .scenes
+                .scenes
+                .iter_mut()
+                .flat_map(|s| &mut s.sources)
+                .filter(|s| s.source_id == target)
+            {
+                item.input = definition.input.clone();
+                if self.runtimes.remove(&item.id).is_some() {
+                    self.library_restarts.push(item.id);
+                }
+            }
+        }
+        true
+    }
+    fn library_dock(&mut self, ui: &mut Ui, ctx: &Context) {
+        self.sync_library();
+        ui.horizontal(|ui| {
+            ui.label(title("Fontes", 16.0));
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                ui.menu_button("+", |ui| {
+                    for (label, kind) in [
+                        ("Tela", Some(PickerKind::Screen)),
+                        ("Janela", Some(PickerKind::Window)),
+                        ("Câmera", Some(PickerKind::Camera)),
+                        ("NDI", Some(PickerKind::Ndi)),
+                        ("Imagem", None),
+                    ] {
+                        if ui
+                            .add_enabled(
+                                self.picker.is_none() && self.image_receiver.is_none(),
+                                Button::new(label),
+                            )
+                            .clicked()
+                        {
+                            if let Some(kind) = kind {
+                                self.open_picker(ctx, kind, None);
+                            } else {
+                                self.open_image(ctx);
+                            }
+                            self.library_target = Some(0);
+                            ui.close();
+                        }
+                    }
+                })
+                .response
+                .on_hover_text("Nova fonte")
+                .widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, "Nova fonte"));
+            });
+        });
+        ui.label(muted("Arraste para uma cena"));
+        ui.add_space(4.0);
+        ScrollArea::vertical().id_salt("library_sources").show(ui, |ui| {
+            if self.scenes.sources.is_empty() { ui.label(muted("Use + para cadastrar sua primeira fonte.")); }
+            for definition in self.scenes.sources.clone() {
+                ui.push_id(definition.id, |ui| {
+                    Frame::new().fill(if self.library_edit == Some(definition.id) { ACCENT_DARK } else { Color32::TRANSPARENT }).corner_radius(4).inner_margin(4).show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            let width = (ui.available_width() - 38.0).max(30.0);
+                            let drag = ui.dnd_drag_source(Id::new(("library_drag", definition.id)), definition.id, |ui| {
+                                ui.horizontal(|ui| {
+                                    let icon = match &definition.input { SourceInput::Camera(_) => Icon::Camera, SourceInput::Image(_) => Icon::Image, SourceInput::Desktop(d) if d.window => Icon::Window, _ => Icon::Monitor };
+                                    let (rect, _) = ui.allocate_exact_size(vec2(18.0, 28.0), Sense::hover());
+                                    paint_icon(ui.painter(), icon, rect.shrink2(vec2(0.0, 5.0)), MUTED);
+                                    ui.add_sized([(width - 26.0).max(10.0), 28.0], Label::new(&definition.name).truncate()).widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, format!("Arrastar fonte: {}", definition.name)));
+                                });
+                            });
+                            if drag.response.double_clicked() { self.library_edit = Some(definition.id); }
+                            drag.response.on_hover_text(format!("{} · {}\nArraste para uma cena. Use a engrenagem para configurar.", definition.name, definition.input.label()));
+                            if small_icon(ui, Icon::Settings, &format!("Configurar fonte: {}", definition.name)).clicked() { self.library_edit = Some(definition.id); }
+                        });
+                    });
+                });
+            }
+        });
+    }
+    fn library_editor(&mut self, ui: &mut Ui, ctx: &Context, id: u64) {
+        let Some(mut definition) = self.scenes.sources.iter().find(|s| s.id == id).cloned() else {
+            self.library_edit = None;
+            return;
+        };
+        ui.horizontal(|ui| {
+            ui.label(title("Configurar fonte", 22.0));
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                if ui.button("Voltar à prévia").clicked() {
+                    self.library_edit = None;
+                }
+            });
+        });
+        ui.separator();
+        ScrollArea::vertical().id_salt("source_editor").show(ui, |ui| {
+            ui.set_max_width(760.0);
+            ui.add_space(12.0);
+            ui.label(muted("Nome na biblioteca"));
+            if ui.add(TextEdit::singleline(&mut definition.name).desired_width(f32::INFINITY).char_limit(80)).changed() && !definition.name.trim().is_empty() {
+                self.scenes.sources.iter_mut().find(|s| s.id == id).unwrap().name = definition.name.clone();
+                for item in self.scenes.scenes.iter_mut().flat_map(|scene| &mut scene.sources).filter(|s| s.source_id == id) { item.name = definition.name.clone(); }
+            }
+            ui.add_space(16.0);
+            ui.label(title(definition.input.label(), 16.0));
+            let detail = match &definition.input { SourceInput::Image(path) => path.display().to_string(), _ => definition.input.name() };
+            ui.add(Label::new(detail).wrap());
+            if ui.add_enabled(self.picker.is_none() && self.image_receiver.is_none(), Button::new("Alterar origem")).clicked() {
+                match &definition.input {
+                    SourceInput::Image(_) => self.open_image(ctx),
+                    SourceInput::Camera(_) => self.open_picker(ctx, PickerKind::Camera, None),
+                    SourceInput::Ndi(_) => self.open_picker(ctx, PickerKind::Ndi, None),
+                    SourceInput::Desktop(d) => self.open_picker(ctx, if d.window { PickerKind::Window } else { PickerKind::Screen }, None),
+                }
+                self.library_target = Some(id);
+            }
+            if let SourceInput::Desktop(desktop) = &mut definition.input
+                && ui.checkbox(&mut desktop.capture_cursor, "Capturar ponteiro do mouse").changed() {
+                self.library_target = Some(id);
+                self.accept_library_input(definition.input.clone());
+            }
+            let uses: Vec<_> = self.scenes.scenes.iter().filter(|scene| scene.sources.iter().any(|s| s.source_id == id)).map(|scene| scene.name.clone()).collect();
+            ui.add_space(16.0);
+            ui.label(title("Utilização", 16.0));
+            ui.add(Label::new(if uses.is_empty() { "Esta fonte ainda não foi adicionada a uma cena.".into() } else { format!("Usada em: {}", uses.join(", ")) }).wrap());
+            ui.label(muted("Nome e origem são compartilhados. Posição e tamanho são definidos em cada cena."));
+            ui.add_space(16.0);
+            ui.horizontal_wrapped(|ui| {
+                if ui.button("Criar cópia independente").clicked() {
+                    definition.id = self.scenes.sources.iter().map(|s| s.id).max().unwrap_or(0) + 1;
+                    definition.name = format!("{} — cópia", definition.name);
+                    self.library_edit = Some(definition.id);
+                    self.scenes.sources.push(definition.clone());
+                }
+                if ui.add_enabled(uses.is_empty(), Button::new("Excluir fonte")).on_hover_text("Remova a fonte das cenas antes de excluí-la da biblioteca.").clicked() {
+                    self.scenes.sources.retain(|s| s.id != id);
+                    self.library_edit = None;
+                }
+            });
+        });
+    }
+    pub(crate) fn add_library_to_scene(
+        &mut self,
+        ctx: &Context,
+        scene_index: usize,
+        definition_id: u64,
+    ) {
+        let Some(definition) = self
+            .scenes
+            .sources
+            .iter()
+            .find(|s| s.id == definition_id)
+            .cloned()
+        else {
+            return;
+        };
+        if scene_index >= self.scenes.scenes.len() {
+            return;
+        }
+        let id = self.allocate_source_id();
+        self.scenes.scenes[scene_index]
+            .sources
+            .push(crate::scenes::SavedSource {
+                id,
+                source_id: definition.id,
+                name: definition.name,
+                input: definition.input,
+                visible: true,
+                locked: false,
+                transform: Default::default(),
+            });
+        if scene_index == self.scenes.active {
+            self.selected = Some(id);
+            self.activate_source(ctx, id);
+        }
+        self.notice = format!(
+            "Fonte adicionada à cena ‘{}’.",
+            self.scenes.scenes[scene_index].name
+        );
+        self.notice_error = false;
+    }
+    fn library_choices(&mut self, ui: &mut Ui, ctx: &Context) {
+        if self.scenes.sources.is_empty() {
+            ui.label("Cadastre uma fonte no painel à esquerda.");
+        }
+        for definition in self.scenes.sources.clone() {
+            if ui.button(&definition.name).clicked() {
+                let id = self.allocate_source_id();
+                self.current_scene_mut()
+                    .sources
+                    .push(crate::scenes::SavedSource {
+                        id,
+                        source_id: definition.id,
+                        name: definition.name,
+                        input: definition.input,
+                        visible: true,
+                        locked: false,
+                        transform: Default::default(),
+                    });
+                self.selected = Some(id);
+                self.activate_source(ctx, id);
+                ui.close();
+            }
+        }
+    }
     fn has_sources(&self) -> bool {
         !self.current_scene().sources.is_empty()
     }
@@ -30,11 +251,12 @@ impl Studio {
         }
     }
     fn duplicate_source(&mut self, ctx: &Context, id: Source) {
+        self.sync_library();
         let Some(mut source) = self.source(id).cloned() else {
             return;
         };
         source.id = self.allocate_source_id();
-        source.name = format!("{} — cópia", source.name);
+        // Duplicating an item keeps its shared source and independent composition.
         source.locked = false;
         let new_id = source.id;
         let index = self
@@ -218,16 +440,16 @@ impl Studio {
     fn bottom_dock(&mut self, ctx: &Context) {
         TopBottomPanel::bottom("studio_dock")
             .resizable(true)
-            .default_height(220.0)
+            .default_height(250.0)
             .height_range(200.0..=(ctx.content_rect().height() * 0.55).max(200.0))
             .frame(Frame::new().fill(LINE).inner_margin(1))
             .show(ctx, |ui| {
                 let available = ui.available_size();
                 let gap = 2.0;
-                let width = available.x - gap * 2.0;
+                let width = available.x - gap * 3.0;
                 ui.spacing_mut().item_spacing = vec2(gap, 6.0);
                 ui.horizontal_top(|ui| {
-                    for (index, ratio) in [0.24, 0.46, 0.30].into_iter().enumerate() {
+                    for (index, ratio) in [0.32, 0.20, 0.28, 0.20].into_iter().enumerate() {
                         ui.allocate_ui_with_layout(
                             vec2(width * ratio, available.y),
                             Layout::top_down(Align::Min),
@@ -242,8 +464,9 @@ impl Studio {
                                     ui.spacing_mut().button_padding = vec2(8.0, 4.0);
                                     ui.spacing_mut().interact_size.y = 28.0;
                                     match index {
-                                        0 => self.scenes_dock(ui, ctx),
-                                        1 => self.sources_dock(ui, ctx),
+                                        0 => self.library_dock(ui, ctx),
+                                        1 => self.scenes_dock(ui, ctx),
+                                        2 => self.sources_dock(ui, ctx),
                                         _ => self.controls_dock(ui, ctx),
                                     }
                                 });
@@ -255,7 +478,7 @@ impl Studio {
     }
     fn sources_dock(&mut self, ui: &mut Ui, ctx: &Context) {
         ui.horizontal(|ui| {
-            ui.label(title("Fontes", 16.0));
+            ui.label(title("Fontes da cena", 16.0));
             ui.label(muted(format!("{}", self.current_scene().sources.len())));
         });
         TopBottomPanel::bottom("source_toolbar")
@@ -264,28 +487,7 @@ impl Studio {
                 ui.add_space(6.0);
                 ui.horizontal(|ui| {
                     ui.menu_button("+", |ui| {
-                        for (name, kind) in [
-                            ("Tela", Some(PickerKind::Screen)),
-                            ("Janela", Some(PickerKind::Window)),
-                            ("Câmera", Some(PickerKind::Camera)),
-                            ("NDI", Some(PickerKind::Ndi)),
-                            ("Imagem", None),
-                        ] {
-                            if ui
-                                .add_enabled(
-                                    kind.is_some() || self.image_receiver.is_none(),
-                                    Button::new(name),
-                                )
-                                .clicked()
-                            {
-                                if let Some(kind) = kind {
-                                    self.open_picker(ctx, kind, None);
-                                } else {
-                                    self.open_image(ctx);
-                                }
-                                ui.close();
-                            }
-                        }
+                        self.library_choices(ui, ctx);
                         if let Some(id) = self.selected
                             && ui.button("Duplicar fonte selecionada").clicked()
                         {
@@ -383,8 +585,7 @@ impl Studio {
                                             }
                                         })
                                         .unwrap_or_else(|| {
-                                            "Fonte salva. Clique em Ativar na lista de fontes."
-                                                .into()
+                                            "Preparando fonte automaticamente…".into()
                                         });
                                     let r =
                                         ui.add_sized(
@@ -453,12 +654,9 @@ impl Studio {
                                     let error = state.as_ref().and_then(|error| error.as_deref());
                                     ui.add(
                                         Label::new(
-                                            RichText::new(
-                                                error
-                                                    .unwrap_or("Fonte salva · aguardando ativação"),
-                                            )
-                                            .size(11.0)
-                                            .color(AMBER),
+                                            RichText::new(error.unwrap_or("Captura interrompida"))
+                                                .size(11.0)
+                                                .color(AMBER),
                                         )
                                         .wrap(),
                                     );
@@ -467,7 +665,7 @@ impl Studio {
                                             .small_button(if error.is_some() {
                                                 "Reconectar"
                                             } else {
-                                                "Ativar"
+                                                "Retomar"
                                             })
                                             .clicked()
                                         {
@@ -619,7 +817,7 @@ impl Studio {
                     && button(
                         ui,
                         Icon::Refresh,
-                        "Ativar fontes",
+                        "Reconectar fontes",
                         ButtonKind::Quiet,
                         ui.available_width(),
                     )
@@ -733,6 +931,7 @@ impl Studio {
                     activate |= ui.button("Reconectar").clicked();
                 });
                 ui.separator();
+                ui.label(muted("Nome e captura são compartilhados entre cenas. Enquadramento e aparência pertencem a este uso."));
                 ui.label(muted(
                     "Mova e redimensione na prévia. Alt + arrastar recorta.",
                 ));
@@ -821,49 +1020,12 @@ impl Studio {
                     .layout(Layout::top_down(Align::Center)),
                 |ui| {
                     ui.label(title("Monte sua cena", 22.0));
-                    ui.label(muted("Escolha o que deseja adicionar"));
-                    ui.add_space(6.0);
-                    ui.horizontal_wrapped(|ui| {
-                        for (label, kind) in [
-                            ("Tela", Some(PickerKind::Screen)),
-                            ("Janela", Some(PickerKind::Window)),
-                            ("Câmera", Some(PickerKind::Camera)),
-                            ("NDI", Some(PickerKind::Ndi)),
-                            ("Imagem", None),
-                        ] {
-                            if ui
-                                .add_enabled(
-                                    kind.is_some() || self.image_receiver.is_none(),
-                                    Button::new(label).min_size(vec2(80.0, 32.0)),
-                                )
-                                .clicked()
-                            {
-                                if let Some(kind) = kind {
-                                    self.open_picker(ctx, kind, None);
-                                } else {
-                                    self.open_image(ctx);
-                                }
-                            }
-                        }
+                    ui.label(muted(
+                        "Prepare as fontes à esquerda e escolha quais usar nesta cena.",
+                    ));
+                    ui.menu_button("Adicionar fonte da biblioteca", |ui| {
+                        self.library_choices(ui, ctx)
                     });
-                    ui.add_enabled_ui(self.image_receiver.is_none(), |ui| {
-                        ui.menu_button("Usar modelo", |ui| {
-                            use crate::scene_ui::SceneTemplate;
-                            for (label, template) in [
-                                ("Tela + câmera", SceneTemplate::ScreenCamera),
-                                ("Janela + câmera", SceneTemplate::WindowCamera),
-                                ("Duas janelas lado a lado", SceneTemplate::SideBySide),
-                            ] {
-                                if ui.button(label).clicked() {
-                                    self.apply_scene_template(ctx, template);
-                                    ui.close();
-                                }
-                            }
-                        });
-                    });
-                    if outer.height() > 220.0 {
-                        ui.label(muted("Você também pode arrastar uma imagem para cá."));
-                    }
                 },
             );
         } else if scene.sources.is_empty() {
@@ -903,8 +1065,8 @@ impl Studio {
                 )
             } else {
                 (
-                    "Cena salva",
-                    "Use Ativar fontes em Controles para abrir a composição",
+                    "Fonte indisponível",
+                    "Confira a origem ou use Reconectar na lista de fontes",
                 )
             };
             painter.text(
@@ -1156,7 +1318,6 @@ impl Studio {
         }
     }
     fn draw_picker(&mut self, ctx: &Context) {
-        let template_progress = self.scene_template_progress();
         let busy = false;
         let mut selected = None;
         let mut refresh = None;
@@ -1196,9 +1357,6 @@ impl Studio {
                             }
                         });
                     });
-                    if let Some(progress) = &template_progress {
-                        ui.label(RichText::new(progress).color(ACCENT));
-                    }
                     ui.label(muted(description));
                     if matches!(picker.kind, PickerKind::Ndi) {
                         ui.label(muted("Requer o NDI Runtime instalado neste computador."));
@@ -1286,8 +1444,8 @@ impl Studio {
             close |= result.should_close();
         }
         if close {
-            self.cancel_scene_template();
             self.picker = None;
+            self.library_target = None;
             self.picker_target = None;
         }
         if let Some(kind) = refresh {
@@ -1316,14 +1474,14 @@ impl Studio {
                 ui.set_width(550.0);
                 ui.horizontal(|ui|{ui.label(title("Seu estúdio em poucos passos",24.0));ui.with_layout(Layout::right_to_left(Align::Center),|ui|{if icon_button(ui,Icon::Close,"Fechar ajuda").clicked(){close=true;}});});
                 ui.label(muted("Mini Studio 1.0.0 · Feito para criar e apresentar."));ui.add_space(12.0);
-                for (n,heading,body) in [("01","Crie suas cenas","Use + no painel Cenas e escolha um modelo para enquadrar suas fontes automaticamente, ou comece com uma cena vazia. O menu ••• permite renomear e duplicar."),("02","Monte sua composição","Na cena vazia, adicione Tela, Janela, Câmera, NDI ou Imagem direto na prévia. Use + em Fontes para adicionar mais. Fontes salvas têm ações de ativar, reconectar e substituir na própria lista."),("03","Encontre o melhor enquadramento","Selecione e arraste qualquer fonte na prévia. Arraste as oito alças para redimensionar; Alt recorta e Shift permite tamanho livre. Ctrl desativa o encaixe; Ctrl+Z desfaz. Use o cadeado para bloquear. Dê dois cliques para abrir Propriedades."),("04","Leve sua imagem para outro aplicativo","Inicie a câmera virtual e escolha Mini Studio RS Cam no aplicativo de chamada. Ou salve a composição como PNG.")] {
+                for (n,heading,body) in [("01","Crie suas cenas","Use + no painel Cenas, dê um nome e crie uma cena vazia. Arraste fontes da biblioteca para a cena. O menu ••• permite renomear e duplicar."),("02","Monte sua composição","Use + em Fontes para cadastrar Tela, Janela, Câmera, NDI ou Imagem. Configure pela engrenagem e arraste a fonte sobre uma cena para reutilizá-la. As fontes da cena ativa iniciam automaticamente."),("03","Encontre o melhor enquadramento","Selecione e arraste qualquer fonte na prévia. Arraste as oito alças para redimensionar; Alt recorta e Shift permite tamanho livre. Ctrl desativa o encaixe; Ctrl+Z desfaz. Use o cadeado para bloquear. Dê dois cliques para abrir Propriedades."),("04","Leve sua imagem para outro aplicativo","Inicie a câmera virtual e escolha Mini Studio RS Cam no aplicativo de chamada. Ou salve a composição como PNG.")] {
                     ui.horizontal_top(|ui|{badge(ui,n,ACCENT);ui.vertical(|ui|{ui.label(title(heading,15.0));ui.label(muted(body));});});ui.add_space(6.0);
                 }
                 ui.separator();
                 ui.horizontal(|ui|{section(ui,"ATALHOS");ui.label(muted("Ctrl+O  Imagem     Ctrl+S  Cena     Ctrl+Shift+S  PNG     Del  Remover"));});
                 ui.add_space(4.0);section(ui,"TAMANHO DA INTERFACE");
                 ui.horizontal(|ui| {for scale in [0.9,1.0,1.1,1.25]{if ui.selectable_label((self.scale-scale).abs()<0.01,format!("{:.0}%",scale*100.0)).clicked(){self.scale=scale;ctx.set_zoom_factor(scale);}}});
-                ui.label(muted("Cenas e ajustes são salvos automaticamente. Ao reabrir, clique em Ativar fontes salvas. Durante a sessão, trocar de cena abre suas fontes."));
+                ui.label(muted("Cenas e ajustes são salvos automaticamente. Ao reabrir e ao trocar de cena, suas fontes iniciam automaticamente. Se uma origem estiver indisponível, confira a conexão ou use Reconectar."));
             });});
             if close || result.should_close() {
                 self.help_open = false;
@@ -1352,7 +1510,14 @@ impl Studio {
         if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::F1)) {
             self.help_open = !self.help_open;
         }
-        if self.picker.is_some()
+        if self.library_edit.is_some()
+            && self.picker.is_none()
+            && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape))
+        {
+            self.library_edit = None;
+        }
+        if self.library_edit.is_some()
+            || self.picker.is_some()
             || self.scene_dialog.is_some()
             || self.properties.is_some()
             || self.help_open
@@ -1442,10 +1607,12 @@ impl Studio {
                 .collect::<Vec<_>>()
         });
         for path in files {
-            self.add_input(ctx, SourceInput::Image(path));
+            self.library_target = Some(0);
+            self.accept_library_input(SourceInput::Image(path));
         }
     }
     fn render(&mut self, ctx: &Context) {
+        self.ensure_scene_sources(ctx);
         self.receive_frames(ctx);
         self.shortcuts(ctx);
         if self.notice != self.notice_seen {
@@ -1455,15 +1622,29 @@ impl Studio {
         self.header(ctx);
         self.footer(ctx);
         self.bottom_dock(ctx);
-        self.selection_strip(ctx);
+        if self.library_edit.is_none() {
+            self.selection_strip(ctx);
+        }
         CentralPanel::default()
             .frame(Frame::new().fill(BG).inner_margin(16))
-            .show(ctx, |ui| self.canvas(ui, ctx));
+            .show(ctx, |ui| {
+                if let Some(id) = self.library_edit {
+                    self.library_editor(ui, ctx, id);
+                } else {
+                    self.canvas(ui, ctx);
+                }
+            });
         self.properties_dialog(ctx);
         self.draw_picker(ctx);
         self.dialogs(ctx);
         self.scene_dialogs(ctx);
         self.projector_dialog(ctx);
+        self.sync_library();
+        for id in std::mem::take(&mut self.library_restarts) {
+            if self.current_scene().sources.iter().any(|s| s.id == id) || self.multiview_open {
+                self.activate_source(ctx, id);
+            }
+        }
         self.multiview(ctx);
         self.projector(ctx);
         if let Some(output) = &self.virtual_camera {
@@ -1580,6 +1761,162 @@ fn reveal_file(path: &Path) {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn restored_image_scene_produces_pixels_without_activation_click() {
+        let folder =
+            std::env::temp_dir().join(format!("mini-studio-autostart-{}", std::process::id()));
+        std::fs::create_dir_all(&folder).unwrap();
+        let image_path = folder.join("source.png");
+        let scene_path = folder.join("scenes.json");
+        image::RgbaImage::from_pixel(8, 8, image::Rgba([20_u8, 90, 140, 255]))
+            .save(&image_path)
+            .unwrap();
+        let mut h = Harness::new(vec2(1024.0, 720.0));
+        let id = h.image("Imagem salva", [255; 4]);
+        h.app.source_mut(id).unwrap().input = SourceInput::Image(image_path.clone());
+        h.app.source_mut(id).unwrap().transform.width = 0.4;
+        h.app.sync_library();
+        h.app.scenes.save(&scene_path).unwrap();
+        h.app.scenes = crate::scenes::SceneLibrary::load(&scene_path)
+            .unwrap()
+            .unwrap();
+        h.app.runtimes.clear();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            h.frame(vec![]);
+            if h.app.runtimes[&id].borrow().pixels.is_some() {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "A fonte salva não iniciou automaticamente"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(
+            &h.app.runtimes[&id].borrow().pixels.as_ref().unwrap().rgba[..4],
+            &[20, 90, 140, 255]
+        );
+        assert_eq!(h.app.source(id).unwrap().transform.width, 0.4);
+        assert!(!h.controls.contains_key("Retomar"));
+        h.app.stop_all();
+        std::fs::remove_file(image_path).unwrap();
+        std::fs::remove_file(scene_path).unwrap();
+        std::fs::remove_dir(folder).unwrap();
+    }
+
+    #[test]
+    fn saved_scene_starts_automatically_and_errors_do_not_retry_every_frame() {
+        use std::rc::Rc;
+        let mut h = Harness::new(vec2(1024.0, 720.0));
+        let id = h.image("Fonte salva", [255; 4]);
+        h.app.runtimes.clear(); // Loaded scenes have definitions but no capture sessions.
+        h.frame(vec![]);
+        assert!(h.app.runtimes.contains_key(&id));
+        assert!(!h.controls.contains_key("Retomar"));
+        let runtime = h.app.runtimes[&id].clone();
+        {
+            let mut source = runtime.borrow_mut();
+            source.stream = crate::source_runtime::Stream::Offline;
+            source.error = Some("Origem indisponível".into());
+        }
+        for _ in 0..3 {
+            h.frame(vec![]);
+        }
+        assert!(Rc::ptr_eq(&runtime, &h.app.runtimes[&id]));
+        assert!(h.controls.contains_key("Reconectar"));
+        h.app.stop_all();
+        h.frame(vec![]);
+        assert!(h.app.runtimes.is_empty());
+        h.app.activate_scene(&h.ctx);
+        assert!(h.app.runtimes.contains_key(&id));
+    }
+
+    #[test]
+    fn library_editor_uses_main_area_and_blocks_scene_shortcuts() {
+        for size in [vec2(800.0, 600.0), vec2(1440.0, 900.0)] {
+            let mut h = Harness::new(size);
+            let id = h.image("Câmera com nome longo para configurar", [255; 4]);
+            h.click("Configurar fonte: Câmera com nome longo para configurar");
+            assert!(h.app.library_edit.is_some());
+            let edit = h.controls["Alterar origem"];
+            let gear = h.controls["Configurar fonte: Câmera com nome longo para configurar"];
+            assert!(edit.bottom() < gear.top());
+            assert!(Rect::from_min_size(Pos2::ZERO, size).contains_rect(edit));
+            h.frame(vec![Event::Key {
+                key: Key::Delete,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: Modifiers::NONE,
+            }]);
+            assert!(h.app.source(id).is_some());
+            h.click("Voltar à prévia");
+            assert!(h.app.library_edit.is_none());
+            h.frame(vec![]);
+            assert!(h.controls.contains_key("Prévia da cena"));
+        }
+    }
+
+    #[test]
+    fn dragging_library_source_to_scenes_creates_independent_uses() {
+        let mut h = Harness::new(vec2(1440.0, 900.0));
+        h.app.library_target = Some(0);
+        h.app
+            .accept_library_input(SourceInput::Image("Arte.png".into()));
+        h.app.scenes.scenes.push(crate::scenes::SavedScene {
+            name: "Cena destino".into(),
+            sources: vec![],
+        });
+        h.frame(vec![]);
+        h.frame(vec![]);
+        let from = h.controls["Arrastar fonte: Arte.png"].center();
+        let to = h.controls["Cena destino"].center();
+        h.drag(from, to);
+        assert!(h.app.scenes.scenes[0].sources.is_empty());
+        assert_eq!(h.app.scenes.scenes[1].sources.len(), 1);
+        assert_eq!(h.app.scenes.sources.len(), 1);
+        h.app.scenes.scenes[1].sources[0].transform.width = 0.4;
+        h.frame(vec![]);
+        h.drag(
+            h.controls["Arrastar fonte: Arte.png"].center(),
+            h.controls["Cena 1"].center(),
+        );
+        assert_eq!(h.app.scenes.scenes[0].sources.len(), 1);
+        assert_eq!(
+            h.app.scenes.scenes[0].sources[0].source_id,
+            h.app.scenes.scenes[1].sources[0].source_id
+        );
+        assert_eq!(h.app.scenes.scenes[0].sources[0].transform.width, 1.0);
+        assert_eq!(h.app.scenes.scenes[1].sources[0].transform.width, 0.4);
+    }
+    #[test]
+    fn library_creation_reuse_and_removal_preserve_definition() {
+        let mut h = Harness::new(vec2(1024.0, 720.0));
+        h.app.library_target = Some(0);
+        assert!(
+            h.app
+                .accept_library_input(SourceInput::Image("C:/library.png".into()))
+        );
+        assert!(h.app.current_scene().sources.is_empty());
+        assert_eq!(h.app.scenes.sources.len(), 1);
+        h.click("Adicionar fonte da biblioteca");
+        h.click("library.png");
+        assert_eq!(h.app.current_scene().sources.len(), 1);
+        let original = h.app.selected.unwrap();
+        h.app.duplicate_source(&h.ctx, original);
+        let copy = h.app.selected.unwrap();
+        h.app.source_mut(copy).unwrap().transform.width = 0.3;
+        h.app.source_mut(copy).unwrap().name = "Fonte comum".into();
+        h.app.sync_library();
+        assert_eq!(h.app.source(original).unwrap().name, "Fonte comum");
+        assert_eq!(h.app.source(original).unwrap().transform.width, 1.0);
+        assert_eq!(h.app.source(copy).unwrap().transform.width, 0.3);
+        h.app.remove_source(original);
+        h.app.remove_source(copy);
+        assert_eq!(h.app.scenes.sources.len(), 1);
+    }
+
+    #[test]
     fn ndi_picker_adds_and_replaces_channels_without_losing_geometry() {
         use crate::{Picker, scenes::NdiSource};
         use std::rc::Rc;
@@ -1674,6 +2011,7 @@ mod tests {
             let transform = h.app.source(id).unwrap().transform;
             let mut duplicate = h.app.source(id).unwrap().clone();
             duplicate.id = h.app.allocate_source_id();
+            duplicate.source_id = 0;
             let other_id = duplicate.id;
             h.app.current_scene_mut().sources.push(duplicate);
             let original_runtime = h.app.runtimes[&id].clone();
@@ -1747,48 +2085,13 @@ mod tests {
     }
 
     #[test]
-    fn guided_picker_advances_and_cancel_keeps_first_source() {
-        let mut h = Harness::new(vec2(1024.0, 720.0));
-        h.app
-            .apply_scene_template(&h.ctx, crate::scene_ui::SceneTemplate::ScreenCamera);
-        let picker = h.app.picker.as_mut().unwrap();
-        picker.receiver = None;
-        picker.choices = vec![Choice::Desktop(
-            crate::native_capture::SourceKind::Screen,
-            crate::native_capture::CaptureSource {
-                id: u32::MAX,
-                name: "Tela de teste inexistente".into(),
-                detail: "Teste do fluxo".into(),
-            },
-        )];
-        h.click("Tela de teste inexistente");
-        assert_eq!(h.app.current_scene().sources.len(), 1);
-        assert!(matches!(
-            h.app.picker.as_ref().map(|picker| picker.kind),
-            Some(PickerKind::Camera)
-        ));
-        assert!(
-            h.app
-                .scene_template_progress()
-                .unwrap()
-                .contains("Etapa 2 de 2")
-        );
-        h.freeze_picker();
-        h.click("Cancelar");
-        assert!(h.app.scene_template_progress().is_none());
-        assert!(h.app.picker.is_none());
-        assert_eq!(h.app.current_scene().sources.len(), 1);
-        let id = h.image("Imagem avulsa", [255; 4]);
-        assert_eq!(h.app.source(id).unwrap().transform, Transform::default());
-    }
-
-    #[test]
     fn empty_preview_offers_direct_sources_at_small_and_large_sizes() {
         for size in [vec2(800.0, 600.0), vec2(1440.0, 900.0)] {
             let mut h = Harness::new(size);
             h.frame(vec![]);
             h.frame(vec![]);
-            for label in ["Tela", "Janela", "Câmera", "NDI", "Imagem", "Usar modelo"] {
+            h.click("Nova fonte");
+            for label in ["Tela", "Janela", "Câmera", "NDI", "Imagem"] {
                 let bounds = h
                     .controls
                     .get(label)
@@ -1813,6 +2116,7 @@ mod tests {
         use crate::scenes::{CameraSource, SavedSource};
         let mut h = Harness::new(vec2(1024.0, 720.0));
         h.app.current_scene_mut().sources.push(SavedSource {
+            source_id: 0,
             id: 91,
             name: "Minha câmera".into(),
             input: SourceInput::Camera(CameraSource {
@@ -1827,10 +2131,22 @@ mod tests {
                 ..Default::default()
             },
         });
+        h.app.sync_library();
         let before = h.app.current_scene().sources[0].clone();
+        h.app.runtimes.insert(
+            91,
+            std::rc::Rc::new(std::cell::RefCell::new(
+                crate::source_runtime::RuntimeSource {
+                    pixels: None,
+                    texture: None,
+                    stream: crate::source_runtime::Stream::Offline,
+                    error: Some("Câmera indisponível".into()),
+                },
+            )),
+        );
         h.frame(vec![]);
-        assert!(h.controls.contains_key("Ativar"));
-        assert!(h.app.runtimes.is_empty());
+        assert!(h.controls.contains_key("Reconectar"));
+        assert!(!h.controls.contains_key("Retomar"));
         assert!(!h.controls.contains_key("Usar modelo"));
         h.click("Escolher outra");
         assert_eq!(h.app.picker_target, Some(91));
@@ -1838,7 +2154,7 @@ mod tests {
         h.freeze_picker();
         h.click("Cancelar");
         assert_eq!(h.app.current_scene().sources[0], before);
-        assert!(h.app.runtimes.is_empty());
+        assert!(h.app.runtimes.contains_key(&91));
     }
 
     #[test]
@@ -1852,6 +2168,7 @@ mod tests {
             name: "Camera".into(),
         });
         let source = SavedSource {
+            source_id: 0,
             id: 100,
             name: "Camera".into(),
             input,
@@ -2085,8 +2402,11 @@ mod tests {
             assert!(scenes.top() > preview.bottom());
             assert!(output.top() > preview.bottom());
             assert!(output.right() <= size.x && output.bottom() < size.y);
+            let library = h.controls["Nova fonte"];
+            assert!(library.top() > preview.bottom());
+            assert!(library.left() < scenes.left());
             assert!((preview.center().x - size.x / 2.0).abs() < 2.0);
-            assert!(preview.width() > size.x * 0.4);
+            assert!(preview.width() > size.x * 0.3);
         }
     }
     #[test]
@@ -2129,7 +2449,7 @@ mod tests {
         h.click("Remover fonte");
         assert!(h.app.source(copy).is_none());
         assert!(h.app.source(green).is_some());
-        assert_eq!(h.app.source(green).unwrap().name, "Logo");
+        assert_eq!(h.app.source(green).unwrap().name, "Outro logo");
     }
     #[test]
     fn preview_moves_resizes_and_respects_source_lock() {

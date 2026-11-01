@@ -10,8 +10,8 @@ Abra **`dist/MiniStudio-1.0.0-Setup.msi`**. O instalador em português cria os a
 
 Também há **`dist/MiniStudio-1.0.0-portable.zip`**: extraia e abra `mini-studio-rs.exe`. A câmera virtual exige o componente instalado pelo MSI. Os hashes dos pacotes ficam em `dist/SHA256SUMS-1.0.0.txt`.
 
-1. No rodapé, use **+** em **Cenas** para dar um nome e escolher um modelo: cena vazia, tela com câmera, janela com câmera ou duas janelas lado a lado. Nos modelos, escolha as fontes em sequência; o enquadramento já vem pronto.
-2. Na prévia vazia, use os botões **Tela**, **Janela**, **Câmera**, **NDI** e **Imagem** para começar, ou escolha **Usar modelo**. Use **+** em **Fontes** para adicionar outras camadas, inclusive do mesmo tipo.
+1. No rodapé, use **+** em **Cenas**, dê um nome e crie a cena. Novas cenas começam vazias, prontas para receber fontes da biblioteca.
+2. No lado esquerdo do rodapé, use **+** para escolher o tipo de fonte. A engrenagem abre um editor amplo na área principal; **Voltar à prévia** retorna à composição. Arraste uma fonte sobre uma cena no painel à direita para adicioná-la. Você pode usar a mesma fonte em várias cenas.
 3. Arraste qualquer fonte na prévia para posicioná-la; use as oito alças dos cantos e laterais para redimensionar. A lista mostra as fontes da frente para trás; use **↑ / ↓** para mudar a ordem.
 4. O olho mostra ou oculta e o cadeado bloqueia o movimento na prévia. **Propriedades** (ou dois cliques na fonte) abre nome, arquivo/dispositivo, espelhamento e opacidade. Posição, tamanho e recorte são ajustados diretamente na prévia.
 5. Em **Controles**, salve a cena, exporte uma imagem PNG ou inicie a câmera virtual. No aplicativo consumidor, escolha **Mini Studio RS Cam**.
@@ -20,9 +20,9 @@ O [guia do usuário](docs/Guia-do-usuario.txt) acompanha os pacotes da versão 1
 
 ## Cenas e fontes
 
-A prévia ocupa a parte superior. **Cenas**, **Fontes** e **Controles** ficam em painéis no rodapé, cuja altura pode ser ajustada arrastando a divisória superior. As propriedades abrem em um diálogo, sem ocupar as laterais.
+A prévia ocupa a parte superior. No rodapé redimensionável, **Fontes** fica à esquerda; **Cenas**, **Fontes da cena** e **Controles** ficam à direita. Arraste uma fonte cadastrada sobre uma cena para adicioná-la. As propriedades abrem em um diálogo, sem ocupar as laterais.
 
-Cada cena guarda uma lista ordenada de fontes, com nomes, visibilidade, bloqueio e transformação independentes. Não existe mais a restrição de uma fonte por tipo: uma cena pode misturar várias imagens, telas, janelas e câmeras.
+Cada cena guarda uma lista ordenada de usos das fontes da biblioteca, com visibilidade, bloqueio e transformação independentes. O nome e a captura são compartilhados. Não existe mais a restrição de uma fonte por tipo: uma cena pode misturar várias imagens, telas, janelas e câmeras.
 
 - Clique em uma cena para alternar. A câmera virtual continua ligada, se estiver ativa.
 - **Visualização múltipla**, no painel **Controles**, abre uma segunda janela redimensionável com prévias ao vivo de todas as cenas. Clique uma vez em qualquer miniatura para trocar a cena da saída; a cena ativa fica destacada. A grade acompanha novas cenas e alterações de composição. Enquanto aberta, mantém as fontes das cenas ativas e compartilha capturas iguais; ao fechar, libera as capturas extras de tela e imagem.
@@ -30,17 +30,23 @@ Cada cena guarda uma lista ordenada de fontes, com nomes, visibilidade, bloqueio
 - As alterações das cenas são salvas automaticamente e ao fechar o aplicativo. **Ctrl+S** permite gravar imediatamente. **Salvar imagem** exporta PNG.
 - No menu **•••** de Cenas, renomeie ou duplique. A lixeira exclui a cena selecionada; a última cena é mantida.
 - Para repetir uma fonte na composição, selecione-a e use **+ → Duplicar fonte selecionada** ou **Ctrl+D**. As duas camadas têm ajustes independentes e compartilham a captura do dispositivo.
-- Ao reabrir o aplicativo, escolha **Ativar fontes**. A lista também oferece ações para ativar fontes salvas e substituir arquivos ou dispositivos indisponíveis, mantendo o enquadramento. As propriedades continuam disponíveis para nome, espelhamento e opacidade.
-
-Nos modelos, cancelar a seleção mantém as fontes já escolhidas na cena; você pode continuar a montagem manualmente. As proporções originais são preservadas, inclusive no modelo lado a lado.
+- Ao reabrir o aplicativo ou trocar de cena, as fontes da cena ativa iniciam automaticamente. Se uma origem falhar, a lista oferece **Reconectar** e a substituição do arquivo ou dispositivo, mantendo o enquadramento. As propriedades continuam disponíveis para nome, espelhamento e opacidade.
 
 As cenas ficam em `%LOCALAPPDATA%\MiniStudioRS\scenes.json`. A estrutura anterior é migrada para a lista de fontes, preservando os nomes, referências e visibilidade. Imagens são referenciadas pelo caminho original: mantenha os arquivos nesse local. Telas e janelas são localizadas novamente pelo nome; se o título mudar ou houver mais de uma correspondência, selecione a fonte outra vez.
+
+### Biblioteca de fontes (2.0)
+
+Em **Fontes**, à esquerda do rodapé, crie e configure telas, janelas, câmeras, canais NDI e imagens antes de montar as cenas. **Adicionar fonte da biblioteca**, na prévia vazia, ou **+** em Fontes da cena reutiliza uma fonte cadastrada; você pode adicioná-la várias vezes e em várias cenas. Fontes sem uso ficam disponíveis sem iniciar uma captura.
+
+O nome e a configuração de captura são compartilhados. Posição, tamanho, recorte, espelhamento, opacidade, visibilidade, bloqueio e ordem pertencem a cada uso na cena. Duplicar uma fonte ou cena mantém os vínculos; **Criar cópia independente**, na biblioteca, cria outra configuração.
+
+Remover uma camada ou excluir uma cena mantém a fonte na biblioteca. A exclusão da biblioteca fica disponível após remover seus usos. As cenas antigas são migradas automaticamente, preservando seus layouts e criando uma entrada independente para cada fonte antiga, mesmo quando usam o mesmo dispositivo ou arquivo. O arquivo migrado usa o formato 3 e não deve ser aberto em versões anteriores do aplicativo.
 
 ## Receber canais NDI
 
 No código atual, **+ em Fontes → NDI** (ou **NDI** na prévia vazia) procura transmissores no computador e na rede local. Instale o [NDI Runtime 6 para Windows x64](https://ndi.link/NDIRedistV6), abra o transmissor e selecione o canal. O botão **Atualizar lista** repete a busca; anúncios da rede podem levar alguns segundos. Sem o runtime, os demais tipos de fonte continuam funcionando.
 
-O canal passa a ser uma camada normal: pode ser recortado, espelhado, duplicado, sobreposto e usado na prévia, no projetor, no PNG e na câmera virtual. **Propriedades → Escolher outra fonte** permite escolher outro canal preservando o enquadramento. A cena salva o nome completo do canal; **Ativar fontes** retoma a recepção após reabrir o aplicativo.
+O canal passa a ser uma camada normal: pode ser recortado, espelhado, duplicado, sobreposto e usado na prévia, no projetor, no PNG e na câmera virtual. **Propriedades → Escolher outra fonte** permite escolher outro canal preservando o enquadramento. A cena salva o nome completo do canal; a recepção inicia automaticamente ao reabrir a cena.
 
 Se o vídeo parar por três segundos, a imagem antiga é removida e aparece **Aguardando NDI…**. A recepção volta automaticamente quando o mesmo canal reaparece. Confira o transmissor, a rede e as permissões de firewall se a lista estiver vazia. O NDI Access Manager pode configurar descoberta entre sub-redes.
 
@@ -69,7 +75,7 @@ Posição, tamanho, recorte e espelhamento são salvos com cada fonte e aplicado
 - Saída virtual NV12 a 30 FPS, com início e parada independentes das fontes e indicação de atividade.
 - PNG/JPEG por seletor, arrastar e soltar ou `--image "C:\imagens\arte.png"`; leitura em segundo plano e preservação da imagem anterior em caso de erro.
 - Busca no seletor de dispositivos/janelas, atualização da lista, estados de carregamento e mensagens de erro.
-- Cenas e preferências salvas por usuário. As fontes da cena são ativadas por você ao reabrir o aplicativo.
+- Cenas e preferências salvas por usuário. As fontes da cena ativa iniciam automaticamente ao reabrir o aplicativo.
 
 | Atalho               | Ação                                       |
 | -------------------- | ------------------------------------------ |

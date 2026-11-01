@@ -5,11 +5,9 @@ LS Brasil
 COMECE AQUI
 1. Instale pelo arquivo MiniStudio-1.0.0-Setup.msi. O instalador cria os
    atalhos e configura a câmera virtual no Windows 11.
-2. Na prévia vazia, escolha Tela, Janela, Câmera ou Imagem para começar.
-   Ou clique em Usar modelo para montar uma composição com enquadramento pronto.
-3. Em + no painel Cenas, dê um nome e escolha: Cena vazia, Tela + câmera,
-   Janela + câmera ou Duas janelas lado a lado. Escolha cada fonte quando
-   solicitado. Cancelar mantém as fontes que você já escolheu.
+2. Use + no painel Fontes para cadastrar uma fonte. A engrenagem abre sua configuração.
+3. Em + no painel Cenas, dê um nome e crie a cena vazia. Arraste as fontes
+   da biblioteca sobre a cena para montar sua composição.
 4. Salve a composição em PNG ou inicie a câmera virtual para usá-la em outro
    aplicativo. Nesse aplicativo, selecione "Mini Studio RS Cam".
 
@@ -20,10 +18,10 @@ O olho mostra ou oculta e o cadeado bloqueia o movimento de uma fonte.
 Arraste na prévia para posicionar; use as alças para redimensionar. Alt recorta,
 Shift permite tamanho livre e Ctrl desativa o encaixe durante o movimento.
 Dê dois cliques na fonte para abrir suas propriedades.
-Os modelos preservam as proporções das fontes. A saída tem 1280 x 720 pixels.
+A saída tem 1280 x 720 pixels.
 As guias e bordas de seleção não aparecem no arquivo ou na câmera.
-As cenas são salvas automaticamente. Ao reabrir, use Ativar fontes; a lista
-oferece também ações por fonte para ativar ou escolher outro arquivo/dispositivo.
+As cenas são salvas automaticamente. Ao reabrir ou trocar de cena, suas fontes iniciam automaticamente.
+Se uma origem estiver indisponível, use Reconectar ou escolha outro arquivo/dispositivo.
 
 IMAGENS
 Abra PNG ou JPEG, ou arraste um arquivo para o Mini Studio. A transparência
@@ -75,3 +73,9 @@ o componente através do MSI da mesma versão.
 
 O Mini Studio compõe vídeo ao vivo e exporta PNG. Não grava vídeo, transmite
 pela internet, captura áudio nem oferece múltiplas cenas nesta versão.
+
+
+BIBLIOTECA DE FONTES — 2.0
+No lado esquerdo do rodapé, use + para escolher o tipo de fonte. Clique na engrenagem para editar nome e origem na área principal, fora da lista; Voltar à prévia retorna à composição. Arraste a fonte sobre uma cena à direita para reutilizá-la, inclusive em cenas que não estão selecionadas. A cena de destino recebe uma camada com enquadramento próprio. A mesma fonte pode aparecer em várias cenas, com posição e tamanho independentes.
+Nome e captura afetam todos os usos. Recorte, espelhamento, opacidade, visibilidade, bloqueio e ordem são individuais. Duplicar mantém o vínculo; Criar cópia independente cria outra fonte na biblioteca.
+Remover da cena mantém a fonte cadastrada. Exclua da biblioteca somente após remover seus usos. Fontes sem uso não iniciam captura. Cenas antigas são migradas preservando as configurações; o formato 3 não é compatível com versões anteriores.

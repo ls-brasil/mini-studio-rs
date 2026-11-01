@@ -86,14 +86,29 @@ impl SourceInput {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct SavedSource {
+pub struct SourceDefinition {
     pub id: u64,
     pub name: String,
+    pub input: SourceInput,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SavedSource {
+    #[serde(default)]
+    pub source_id: u64,
+    pub id: u64,
+    #[serde(default, skip_serializing)]
+    pub name: String,
+    #[serde(default = "empty_input", skip_serializing)]
     pub input: SourceInput,
     pub visible: bool,
     pub locked: bool,
     pub transform: Transform,
 }
+fn empty_input() -> SourceInput {
+    SourceInput::Image(PathBuf::new())
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SavedScene {
     pub name: String,
@@ -109,6 +124,8 @@ impl Default for SavedScene {
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SceneLibrary {
+    #[serde(default)]
+    pub sources: Vec<SourceDefinition>,
     pub version: u32,
     pub active: usize,
     pub scenes: Vec<SavedScene>,
@@ -116,13 +133,58 @@ pub struct SceneLibrary {
 impl Default for SceneLibrary {
     fn default() -> Self {
         Self {
-            version: 2,
+            version: 3,
+            sources: vec![],
             active: 0,
             scenes: vec![SavedScene::default()],
         }
     }
 }
 impl SceneLibrary {
+    // Scene entries cache the definition for the editor; source_id is the shared identity.
+    // A changed cache commits a definition edit; composition fields remain local.
+    pub fn reconcile_sources(&mut self) -> Vec<u64> {
+        let mut next = self.sources.iter().map(|s| s.id).max().unwrap_or(0) + 1;
+        for scene in &mut self.scenes {
+            for item in &mut scene.sources {
+                if item.source_id == 0 {
+                    item.source_id = next;
+                    next += 1;
+                    self.sources.push(SourceDefinition {
+                        id: item.source_id,
+                        name: item.name.clone(),
+                        input: item.input.clone(),
+                    });
+                }
+            }
+        }
+        let mut changed = Vec::new();
+        for definition in &mut self.sources {
+            if let Some(item) = self.scenes.iter().flat_map(|s| &s.sources).find(|s| {
+                s.source_id == definition.id
+                    && (s.name != definition.name || s.input != definition.input)
+            }) {
+                if item.input != definition.input {
+                    changed.push(definition.id);
+                }
+                definition.name = item.name.clone();
+                definition.input = item.input.clone();
+            }
+        }
+        let mut invalidated = Vec::new();
+        for item in self.scenes.iter_mut().flat_map(|s| &mut s.sources) {
+            if let Some(definition) = self.sources.iter().find(|s| s.id == item.source_id) {
+                let stale = item.input != definition.input;
+                item.name = definition.name.clone();
+                item.input = definition.input.clone();
+                if stale && changed.contains(&item.source_id) {
+                    invalidated.push(item.id);
+                }
+            }
+        }
+        invalidated
+    }
+
     pub fn path() -> Result<PathBuf, String> {
         std::env::var_os("LOCALAPPDATA")
             .map(|base| PathBuf::from(base).join("MiniStudioRS").join("scenes.json"))
@@ -138,14 +200,16 @@ impl SceneLibrary {
     }
     fn decode(bytes: &[u8]) -> Result<Self, String> {
         let value: serde_json::Value = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
+        let is_v3 = value["version"].as_u64() == Some(3);
         let mut library: Self = match value["version"].as_u64() {
-            Some(2) => serde_json::from_value(value).map_err(|e| e.to_string())?,
+            Some(2) | Some(3) => serde_json::from_value(value).map_err(|e| e.to_string())?,
             Some(1) => {
                 let old: LegacyLibrary =
                     serde_json::from_value(value).map_err(|e| e.to_string())?;
                 let mut next = 1;
                 Self {
-                    version: 2,
+                    version: 3,
+                    sources: vec![],
                     active: old.active,
                     scenes: old
                         .scenes
@@ -156,6 +220,23 @@ impl SceneLibrary {
             }
             _ => return Err("Versão do arquivo de cenas não reconhecida.".into()),
         };
+        if is_v3 {
+            let mut ids = std::collections::HashSet::new();
+            for definition in &library.sources {
+                if definition.id == 0 || definition.id == u64::MAX || !ids.insert(definition.id) {
+                    return Err("Identificadores inválidos na biblioteca de fontes.".into());
+                }
+            }
+            for item in library.scenes.iter_mut().flat_map(|s| &mut s.sources) {
+                let definition = library
+                    .sources
+                    .iter()
+                    .find(|s| s.id == item.source_id)
+                    .ok_or("Referência a uma fonte inexistente na biblioteca.")?;
+                item.name = definition.name.clone();
+                item.input = definition.input.clone();
+            }
+        }
         if library.scenes.is_empty() {
             return Err("O arquivo de cenas está vazio.".into());
         }
@@ -177,15 +258,19 @@ impl SceneLibrary {
                 }
             }
         }
+        library.reconcile_sources();
+        library.version = 3;
         Ok(library)
     }
     pub fn save(&self, path: &Path) -> Result<(), String> {
+        let mut normalized = self.clone();
+        normalized.reconcile_sources();
         std::fs::create_dir_all(path.parent().ok_or("Pasta de cenas inválida.")?)
             .map_err(|e| e.to_string())?;
         let temp = path.with_extension(format!("{}.tmp", std::process::id()));
         std::fs::write(
             &temp,
-            serde_json::to_vec_pretty(self).map_err(|e| e.to_string())?,
+            serde_json::to_vec_pretty(&normalized).map_err(|e| e.to_string())?,
         )
         .map_err(|e| e.to_string())?;
         std::fs::rename(temp, path).map_err(|e| e.to_string())
@@ -262,6 +347,7 @@ impl LegacyScene {
                 self.source_names[index].clone()
             };
             sources.push(SavedSource {
+                source_id: 0,
                 id: *next,
                 name,
                 input,
@@ -337,6 +423,49 @@ impl LegacyScene {
 mod tests {
     use super::*;
     #[test]
+    fn shared_library_keeps_layout_local_and_survives_removing_all_uses() {
+        let old = br#"{"version":2,"active":0,"scenes":[{"name":"Cena","sources":[{"id":1,"name":"Tela","input":{"Desktop":{"window":false,"name":"Tela","detail":"Monitor"}},"visible":true,"locked":false,"transform":{}}]}]}"#;
+        let mut library = SceneLibrary::decode(old).unwrap();
+        let mut second = library.scenes[0].clone();
+        second.name = "Outra".into();
+        second.sources[0].id = 2;
+        second.sources[0].transform.width = 0.4;
+        second.sources[0].visible = false;
+        library.scenes.push(second);
+        library.scenes[0].sources[0].name = "Compartilhada".into();
+        let SourceInput::Desktop(d) = &mut library.scenes[0].sources[0].input else {
+            panic!()
+        };
+        d.capture_cursor = false;
+        assert_eq!(library.reconcile_sources(), vec![2]);
+        assert_eq!(library.scenes[1].sources[0].name, "Compartilhada");
+        assert_eq!(library.scenes[1].sources[0].transform.width, 0.4);
+        assert!(!library.scenes[1].sources[0].visible);
+        assert_eq!(library.scenes[0].sources[0].transform.width, 1.0);
+        let restored = SceneLibrary::decode(&serde_json::to_vec(&library).unwrap()).unwrap();
+        assert_eq!(restored, library);
+        for scene in &mut library.scenes {
+            scene.sources.clear();
+        }
+        library.reconcile_sources();
+        let restored = SceneLibrary::decode(&serde_json::to_vec(&library).unwrap()).unwrap();
+        assert_eq!(restored.sources.len(), 1);
+    }
+
+    #[test]
+    fn migration_preserves_distinct_sources_and_rejects_broken_references() {
+        let old = br#"{"version":2,"active":0,"scenes":[{"name":"Cena","sources":[{"id":1,"name":"A","input":{"Image":"C:/a.png"},"visible":true,"locked":false,"transform":{}},{"id":2,"name":"B","input":{"Image":"C:/a.png"},"visible":false,"locked":true,"transform":{}}]}]}"#;
+        let mut library = SceneLibrary::decode(old).unwrap();
+        assert_eq!(library.sources.len(), 2);
+        assert_ne!(
+            library.scenes[0].sources[0].source_id,
+            library.scenes[0].sources[1].source_id
+        );
+        library.sources.clear();
+        assert!(SceneLibrary::decode(&serde_json::to_vec(&library).unwrap()).is_err());
+    }
+
+    #[test]
     fn ndi_channel_identity_round_trips_with_other_source_types() {
         let input = SourceInput::Ndi(NdiSource {
             name: "ESTÚDIO (Câmera principal)".into(),
@@ -344,6 +473,7 @@ mod tests {
         let mut library = SceneLibrary::default();
         library.scenes[0].sources = vec![
             SavedSource {
+                source_id: 0,
                 id: 1,
                 name: "Vídeo da rede".into(),
                 input: input.clone(),
@@ -357,6 +487,7 @@ mod tests {
                 },
             },
             SavedSource {
+                source_id: 0,
                 id: 2,
                 name: "Fundo".into(),
                 input: SourceInput::Image("C:/fundo.png".into()),
@@ -365,6 +496,7 @@ mod tests {
                 transform: Transform::default(),
             },
         ];
+        library.reconcile_sources();
         let restored = SceneLibrary::decode(&serde_json::to_vec(&library).unwrap()).unwrap();
         assert_eq!(restored, library);
         assert_eq!(input.label(), "NDI");
@@ -377,6 +509,7 @@ mod tests {
         let mut library = SceneLibrary::decode(old).unwrap();
         let mut duplicate = library.scenes[0].sources[0].clone();
         duplicate.id = 2;
+        duplicate.source_id = 0;
         let SourceInput::Desktop(desktop) = &mut duplicate.input else {
             panic!("Esperava fonte de desktop");
         };
@@ -384,6 +517,7 @@ mod tests {
         desktop.capture_cursor = false;
         desktop.window = true;
         library.scenes[0].sources.push(duplicate);
+        library.reconcile_sources();
         let restored = SceneLibrary::decode(&serde_json::to_vec(&library).unwrap()).unwrap();
         assert_eq!(restored, library);
         for (source, expected) in restored.scenes[0].sources.iter().zip([true, false]) {
@@ -398,7 +532,7 @@ mod tests {
     fn old_scenes_migrate_to_ordered_sources_without_losing_names_or_visibility() {
         let old=br#"{"version":1,"active":0,"scenes":[{"name":"Aula","desktop":{"window":true,"name":"Slides","detail":"App"},"image_path":"C:/fundo.png","source_names":["Minha janela","","Fundo"],"desktop_visible":false}]}"#;
         let library = SceneLibrary::decode(old).unwrap();
-        assert_eq!(library.version, 2);
+        assert_eq!(library.version, 3);
         assert_eq!(library.scenes[0].name, "Aula");
         let sources = &library.scenes[0].sources;
         assert_eq!(sources.len(), 2);
@@ -412,6 +546,7 @@ mod tests {
         let mut library = SceneLibrary::default();
         for id in 1..=4 {
             library.scenes[0].sources.push(SavedSource {
+                source_id: 0,
                 id,
                 name: format!("Imagem {id}"),
                 input: SourceInput::Image(format!("C:/{id}.png").into()),
@@ -426,8 +561,10 @@ mod tests {
         let folder =
             std::env::temp_dir().join(format!("mini-studio-scene-v2-{}", std::process::id()));
         let path = folder.join("scenes.json");
+        library.reconcile_sources();
         library.save(&path).unwrap();
         library.scenes[0].sources.reverse();
+        library.reconcile_sources();
         library.save(&path).unwrap();
         assert_eq!(SceneLibrary::load(&path).unwrap().unwrap(), library);
         std::fs::write(&path, b"broken").unwrap();

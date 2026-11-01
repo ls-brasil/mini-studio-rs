@@ -1,151 +1,20 @@
 use crate::{
     PickerKind, Studio,
-    composition::{Source, Transform},
     scenes::{SavedScene, SceneLibrary},
     theme::*,
 };
 use eframe::egui::*;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) enum SceneTemplate {
-    #[default]
-    Empty,
-    ScreenCamera,
-    WindowCamera,
-    SideBySide,
-}
-
-impl SceneTemplate {
-    pub(crate) const ALL: [Self; 4] = [
-        Self::Empty,
-        Self::ScreenCamera,
-        Self::WindowCamera,
-        Self::SideBySide,
-    ];
-
-    pub(crate) fn label(self) -> &'static str {
-        match self {
-            Self::Empty => "Cena vazia",
-            Self::ScreenCamera => "Tela + câmera no canto",
-            Self::WindowCamera => "Janela + câmera no canto",
-            Self::SideBySide => "Duas janelas lado a lado",
-        }
-    }
-
-    fn description(self) -> &'static str {
-        match self {
-            Self::Empty => "Adicione suas fontes e monte a composição livremente.",
-            Self::ScreenCamera | Self::WindowCamera => {
-                "Escolha o conteúdo e depois a câmera. O enquadramento fica pronto automaticamente."
-            }
-            Self::SideBySide => {
-                "Escolha a janela da esquerda e depois a da direita. As proporções das imagens são preservadas."
-            }
-        }
-    }
-
-    fn step(self, index: usize) -> Option<(PickerKind, Transform, &'static str)> {
-        let full = Transform::default();
-        match (self, index) {
-            (Self::ScreenCamera, 0) => Some((PickerKind::Screen, full, "Escolha a tela principal")),
-            (Self::WindowCamera, 0) => {
-                Some((PickerKind::Window, full, "Escolha a janela principal"))
-            }
-            (Self::ScreenCamera | Self::WindowCamera, 1) => Some((
-                PickerKind::Camera,
-                Transform {
-                    x: 0.70,
-                    y: 0.66,
-                    width: 0.28,
-                    height: 0.30,
-                    ..full
-                },
-                "Escolha a câmera para o canto inferior direito",
-            )),
-            (Self::SideBySide, 0 | 1) => Some((
-                PickerKind::Window,
-                Transform {
-                    x: if index == 0 { 0.02 } else { 0.51 },
-                    y: 0.04,
-                    width: 0.47,
-                    height: 0.92,
-                    ..full
-                },
-                if index == 0 {
-                    "Escolha a janela da esquerda"
-                } else {
-                    "Escolha a janela da direita"
-                },
-            )),
-            _ => None,
-        }
-    }
-}
-
-pub(crate) struct TemplateSetup {
-    template: SceneTemplate,
-    step: usize,
-}
-
 pub(crate) enum SceneDialog {
-    Create {
-        name: String,
-        template: SceneTemplate,
-    },
-    Rename {
-        name: String,
-    },
+    Create { name: String },
+    Rename { name: String },
     Delete,
 }
 impl Studio {
-    pub(crate) fn apply_scene_template(&mut self, ctx: &Context, template: SceneTemplate) {
-        if !self.current_scene().sources.is_empty() || self.image_receiver.is_some() {
-            return;
-        }
-        self.cancel_scene_template();
-        self.scene_template = Some(TemplateSetup { template, step: 0 });
-        self.open_template_step(ctx);
-    }
-
-    pub(crate) fn cancel_scene_template(&mut self) {
-        self.scene_template = None;
-    }
-
-    pub(crate) fn scene_template_progress(&self) -> Option<String> {
-        let setup = self.scene_template.as_ref()?;
-        let (_, _, instruction) = setup.template.step(setup.step)?;
-        Some(format!("Etapa {} de 2 · {instruction}", setup.step + 1))
-    }
-
-    fn open_template_step(&mut self, ctx: &Context) {
-        let Some(setup) = self.scene_template.take() else {
-            return;
-        };
-        if let Some((kind, _, _)) = setup.template.step(setup.step) {
-            self.open_picker(ctx, kind, None);
-            self.scene_template = Some(setup);
-        }
-    }
-
     pub(crate) fn refresh_picker(&mut self, ctx: &Context, kind: PickerKind) {
-        let setup = self.scene_template.take();
+        let library_target = self.library_target;
         self.open_picker(ctx, kind, self.picker_target);
-        self.scene_template = setup;
-    }
-
-    pub(crate) fn accept_template_source(&mut self, ctx: &Context, id: Source) {
-        let Some(mut setup) = self.scene_template.take() else {
-            return;
-        };
-        if let Some((_, transform, _)) = setup.template.step(setup.step)
-            && let Some(source) = self.source_mut(id)
-        {
-            source.transform = transform;
-            setup.step += 1;
-            self.scene_template = Some(setup);
-            self.persist_scenes(false);
-            self.open_template_step(ctx);
-        }
+        self.library_target = library_target;
     }
 
     pub(crate) fn initialize_scenes(&mut self) {
@@ -163,6 +32,7 @@ impl Studio {
         self.saved_scenes = self.scenes.clone();
     }
     pub(crate) fn persist_scenes(&mut self, explicit: bool) {
+        self.sync_library();
         if self.options.screenshot.is_some() || self.options.benchmark.is_some() {
             return;
         }
@@ -189,12 +59,28 @@ impl Studio {
         if index == self.scenes.active || index >= self.scenes.scenes.len() {
             return;
         }
+        self.sync_library();
+        let shared: Vec<_> = self.scenes.scenes[index]
+            .sources
+            .iter()
+            .filter_map(|item| {
+                self.scenes
+                    .scenes
+                    .iter()
+                    .flat_map(|scene| &scene.sources)
+                    .filter(|other| other.source_id == item.source_id)
+                    .find_map(|other| self.runtimes.get(&other.id).cloned())
+                    .map(|runtime| (item.id, runtime))
+            })
+            .collect();
         self.clear_scene_runtime();
         self.scenes.active = index;
+        self.runtimes.extend(shared);
         self.activate_scene(ctx);
         self.persist_scenes(false);
     }
     pub(crate) fn activate_scene(&mut self, ctx: &Context) {
+        self.sources_stopped = false;
         let ids: Vec<_> = self.current_scene().sources.iter().map(|s| s.id).collect();
         for id in ids {
             if self
@@ -214,6 +100,7 @@ impl Studio {
         self.switch_scene(ctx, self.scenes.scenes.len() - 1);
     }
     fn duplicate_scene(&mut self, ctx: &Context) {
+        self.sync_library();
         let mut scene = self.current_scene().clone();
         scene.name = self.scenes.unique_name(&format!("{} — cópia", scene.name));
         for source in &mut scene.sources {
@@ -245,7 +132,6 @@ impl Studio {
                     if crate::studio_ui::glyph_button(ui, "+", "Nova cena").clicked() {
                         self.scene_dialog = Some(SceneDialog::Create {
                             name: self.scenes.unique_name("Nova cena"),
-                            template: SceneTemplate::Empty,
                         });
                     }
                     if ui
@@ -274,11 +160,25 @@ impl Studio {
         ScrollArea::vertical().id_salt("scene_list").show(ui, |ui| {
             let mut switch = None;
             let mut rename = false;
+            let mut dropped = None;
             for (index, scene) in self.scenes.scenes.iter().enumerate() {
                 let r = ui.add_sized(
                     [ui.available_width(), 28.0],
                     Button::selectable(index == self.scenes.active, &scene.name).truncate(),
                 );
+                if r.contains_pointer()
+                    && eframe::egui::DragAndDrop::has_payload_of_type::<u64>(ctx)
+                {
+                    ui.painter().rect_stroke(
+                        r.rect,
+                        4,
+                        Stroke::new(2.0_f32, ACCENT),
+                        StrokeKind::Inside,
+                    );
+                }
+                if let Some(source_id) = r.dnd_release_payload::<u64>() {
+                    dropped = Some((index, *source_id));
+                }
                 if r.clicked() {
                     switch = Some(index);
                 }
@@ -287,6 +187,9 @@ impl Studio {
                     rename = true;
                 }
                 r.on_hover_text(&scene.name);
+            }
+            if let Some((index, source_id)) = dropped {
+                self.add_library_to_scene(ctx, index, source_id);
             }
             if let Some(index) = switch {
                 self.switch_scene(ctx, index);
@@ -317,7 +220,7 @@ impl Studio {
                     23.0,
                 ));
                 match &mut dialog {
-                    SceneDialog::Create { name, .. } | SceneDialog::Rename { name } => {
+                    SceneDialog::Create { name } | SceneDialog::Rename { name } => {
                         let label = ui.label(muted("Nome da cena"));
                         ui.add(
                             TextEdit::singleline(name)
@@ -334,17 +237,8 @@ impl Studio {
                         ));
                     }
                 }
-                if let SceneDialog::Create { template, .. } = &mut dialog {
-                    ui.add_space(8.0);
-                    ui.label(muted("Começar com"));
-                    for choice in SceneTemplate::ALL {
-                        ui.selectable_value(template, choice, choice.label());
-                    }
-                    ui.add_space(6.0);
-                    ui.label(muted(template.description()));
-                }
                 let valid = match &dialog {
-                    SceneDialog::Create { name, .. } | SceneDialog::Rename { name } => {
+                    SceneDialog::Create { name } | SceneDialog::Rename { name } => {
                         !name.trim().is_empty()
                     }
                     SceneDialog::Delete => true,
@@ -361,9 +255,8 @@ impl Studio {
             });
         if accept {
             match dialog {
-                SceneDialog::Create { name, template } => {
+                SceneDialog::Create { name } => {
                     self.create_scene(ctx, name.trim().into());
-                    self.apply_scene_template(ctx, template);
                 }
                 SceneDialog::Rename { name } => {
                     self.current_scene_mut().name = name.trim().into();
@@ -374,127 +267,5 @@ impl Studio {
         } else if !cancel && !response.should_close() {
             self.scene_dialog = Some(dialog);
         }
-    }
-}
-
-#[cfg(test)]
-mod template_tests {
-    use super::*;
-    use crate::{
-        Options,
-        scenes::{SavedSource, SourceInput},
-    };
-    use std::path::PathBuf;
-
-    fn studio() -> (Studio, Context) {
-        let ctx = Context::default();
-        let app = Studio::initialize(
-            &ctx,
-            "teste".into(),
-            Options {
-                screenshot: Some(PathBuf::from("unused.png")),
-                ..Default::default()
-            },
-        );
-        (app, ctx)
-    }
-
-    #[test]
-    fn templates_preserve_aspect_ratio_and_keep_sources_inside_canvas() {
-        for template in SceneTemplate::ALL {
-            for index in 0..2 {
-                if let Some((_, transform, _)) = template.step(index) {
-                    assert!(!transform.stretch);
-                    assert!(transform.width > 0.0 && transform.height > 0.0);
-                    assert!(transform.x >= 0.0 && transform.x + transform.width <= 1.0);
-                    assert!(transform.y >= 0.0 && transform.y + transform.height <= 1.0);
-                }
-            }
-            assert!(template.step(2).is_none());
-        }
-        let (_, left, _) = SceneTemplate::SideBySide.step(0).unwrap();
-        let (_, right, _) = SceneTemplate::SideBySide.step(1).unwrap();
-        assert!(left.x + left.width < right.x);
-        assert!(SceneTemplate::Empty.step(0).is_none());
-    }
-
-    #[test]
-    fn camera_template_fits_four_by_three_without_distortion() {
-        use crate::composition::{Pixels, Scene, SceneSource};
-        let (_, transform, _) = SceneTemplate::ScreenCamera.step(1).unwrap();
-        let scene = Scene {
-            sources: vec![SceneSource {
-                id: 1,
-                pixels: Pixels {
-                    width: 640,
-                    height: 480,
-                    rgba: std::sync::Arc::from([]),
-                },
-                transform,
-            }],
-        };
-        let layer = &scene.layers()[1];
-        assert!((layer.rect[2] / layer.rect[3] - 4.0 / 3.0).abs() < 0.01);
-        // As coordenadas da camada são arredondadas ao pixel mais próximo.
-        assert!(layer.rect[0] + 0.5 >= 1280.0 * 0.70);
-        assert!(layer.rect[1] + 0.5 >= 720.0 * 0.66);
-        assert!(layer.rect[0] + layer.rect[2] <= 1280.0);
-        assert!(layer.rect[1] + layer.rect[3] <= 720.0);
-    }
-
-    #[test]
-    fn final_choice_gets_template_layout_and_finishes_setup() {
-        let (mut app, ctx) = studio();
-        app.current_scene_mut().sources.push(SavedSource {
-            id: 1,
-            name: "Câmera escolhida".into(),
-            input: SourceInput::Image(PathBuf::from("unused.png")),
-            visible: true,
-            locked: false,
-            transform: Transform::default(),
-        });
-        app.scene_template = Some(TemplateSetup {
-            template: SceneTemplate::ScreenCamera,
-            step: 1,
-        });
-        assert!(
-            app.scene_template_progress()
-                .unwrap()
-                .contains("Etapa 2 de 2")
-        );
-        app.accept_template_source(&ctx, 1);
-        assert!(app.scene_template.is_none());
-        assert!(app.picker.is_none());
-        assert_eq!(
-            app.source(1).unwrap().transform,
-            SceneTemplate::ScreenCamera.step(1).unwrap().1
-        );
-    }
-
-    #[test]
-    fn cancel_and_scene_reset_clear_pending_layout_without_removing_sources() {
-        let (mut app, _) = studio();
-        app.current_scene_mut().sources.push(SavedSource {
-            id: 1,
-            name: "Já escolhida".into(),
-            input: SourceInput::Image(PathBuf::from("unused.png")),
-            visible: true,
-            locked: false,
-            transform: Transform::default(),
-        });
-        app.scene_template = Some(TemplateSetup {
-            template: SceneTemplate::SideBySide,
-            step: 1,
-        });
-        app.cancel_scene_template();
-        assert!(app.scene_template.is_none());
-        assert_eq!(app.current_scene().sources.len(), 1);
-        app.scene_template = Some(TemplateSetup {
-            template: SceneTemplate::ScreenCamera,
-            step: 1,
-        });
-        app.clear_scene_runtime();
-        assert!(app.scene_template.is_none());
-        assert_eq!(app.current_scene().sources.len(), 1);
     }
 }

@@ -2,6 +2,26 @@
 
 ## Em desenvolvimento
 
+- Removidos os templates de cena e o fluxo de seleção guiada. Criar cena agora solicita apenas o nome e gera uma composição vazia para receber fontes da biblioteca; cenas já salvas mantêm suas fontes e enquadramentos. Ajuda e guias ajustados.
+- Removidos os cinco testes exclusivos dos templates: os 51 testes restantes passaram, com sete testes de integração ignorados e Clippy sem avisos. A atualização da lista de origens preserva o destino da configuração na biblioteca.
+
+- Fontes da cena ativa iniciam automaticamente ao reabrir o aplicativo, sem aguardar Ativar. A troca de cena mantém a abertura automática; erros reais oferecem Reconectar sem repetir tentativas a cada quadro, e o encerramento explícito das capturas é respeitado. Ajuda e guias atualizados para esse comportamento.
+
+- Conferência visual da biblioteca compacta e do editor amplo em uma cópia de verificação, sem gravar nas cenas do usuário.
+- Biblioteca compacta com um único botão + para escolher o tipo e linhas com ícone, nome truncado e engrenagem. A edição ocupa a área principal, fora do rodapé e sem modal, com nome, origem, captura do cursor, indicação de uso, cópia e exclusão; Voltar à prévia retorna à composição.
+
+- Fontes podem ser arrastadas da biblioteca no rodapé sobre qualquer cena; o destino recebe destaque durante o arraste, e cada uso mantém sua posição e tamanho. Configurações da biblioteca ficam no editor separado para liberar a lista de fontes.
+
+- Layout dividido em biblioteca no lado esquerdo do rodapé e cenas à direita, mantendo a prévia grande acima. Adicionar uma camada passa a selecionar fontes cadastradas; a prévia vazia orienta o reaproveitamento, e imagens arrastadas são cadastradas na biblioteca.
+
+- Versão de distribuição elevada para 2.0.0.
+- Biblioteca de fontes permite cadastrar e configurar capturas e imagens sem vinculá-las a uma cena, reutilizá-las em várias cenas e criar cópias independentes.
+- Nome e configuração da captura compartilhados; posição, tamanho, recorte, espelhamento, opacidade, visibilidade, bloqueio e ordem independentes por uso. Duplicar cenas ou camadas mantém a referência à fonte.
+- Remover usos ou cenas preserva as fontes cadastradas; exclusão da biblioteca disponível somente para fontes sem uso, com indicação das cenas que as utilizam.
+- Migração das cenas antigas para o formato 3 preserva cada configuração e composição, sem unir fontes automaticamente. O formato migrado não é compatível com versões anteriores.
+- Guia e README atualizados para o fluxo da biblioteca.
+- Validação automatizada: 56 testes passaram (incluindo arrastar uma fonte para duas cenas com enquadramentos independentes e editor da biblioteca em janelas de 800×600 e 1440×900, carregamento automático de uma imagem de cena salva e ausência de repetição de abertura após falha) e Clippy passou sem avisos; sete testes que dependem de dispositivos, desktop interativo ou componentes instalados não foram executados.
+
 - Nova fonte NDI com descoberta de canais locais e da rede, busca por nome e atualização da lista, disponível na prévia vazia e no menu de Fontes.
 - Canais NDI salvos nas cenas, compartilhamento de recepção entre fontes iguais e substituição do canal preservando o enquadramento. O vídeo participa da composição, projetor, exportação PNG e câmera virtual.
 - Recepção NDI em segundo plano, com transparência e mudanças de resolução; após três segundos sem vídeo, a imagem antiga é removida e a fonte aguarda reconexão automática.
