@@ -10,10 +10,10 @@ Abra **`dist/MiniStudio-1.0.0-Setup.msi`**. O instalador em português cria os a
 
 Também há **`dist/MiniStudio-1.0.0-portable.zip`**: extraia e abra `mini-studio-rs.exe`. A câmera virtual exige o componente instalado pelo MSI. Os hashes dos pacotes ficam em `dist/SHA256SUMS-1.0.0.txt`.
 
-1. No rodapé, use **+** em **Cenas** para criar uma composição vazia e dar um nome.
-2. Use **+** em **Fontes** para adicionar telas, janelas, câmeras e imagens. Combine várias fontes, inclusive do mesmo tipo.
+1. No rodapé, use **+** em **Cenas** para dar um nome e escolher um modelo: cena vazia, tela com câmera, janela com câmera ou duas janelas lado a lado. Nos modelos, escolha as fontes em sequência; o enquadramento já vem pronto.
+2. Na prévia vazia, use os botões **Tela**, **Janela**, **Câmera** e **Imagem** para começar, ou escolha **Usar modelo**. Use **+** em **Fontes** para adicionar outras camadas, inclusive do mesmo tipo.
 3. Arraste qualquer fonte na prévia para posicioná-la; use as oito alças dos cantos e laterais para redimensionar. A lista mostra as fontes da frente para trás; use **↑ / ↓** para mudar a ordem.
-4. O olho mostra ou oculta e o cadeado bloqueia o movimento na prévia. **Propriedades** (ou dois cliques na fonte) abre nome, posição, tamanho, espelhamento e opacidade.
+4. O olho mostra ou oculta e o cadeado bloqueia o movimento na prévia. **Propriedades** (ou dois cliques na fonte) abre nome, arquivo/dispositivo, espelhamento e opacidade. Posição, tamanho e recorte são ajustados diretamente na prévia.
 5. Em **Controles**, salve a cena, exporte uma imagem PNG ou inicie a câmera virtual. No aplicativo consumidor, escolha **Mini Studio RS Cam**.
 
 O [guia do usuário](docs/Guia-do-usuario.txt) acompanha os pacotes da versão 1.0; o fluxo de cenas descrito abaixo corresponde ao código atual do projeto. **Ajuda** ou **F1** abre orientações e opções de tamanho da interface.
@@ -29,7 +29,9 @@ Cada cena guarda uma lista ordenada de fontes, com nomes, visibilidade, bloqueio
 - As alterações das cenas são salvas automaticamente e ao fechar o aplicativo. **Ctrl+S** permite gravar imediatamente. **Salvar imagem** exporta PNG.
 - No menu **•••** de Cenas, renomeie ou duplique. A lixeira exclui a cena selecionada; a última cena é mantida.
 - Para repetir uma fonte na composição, selecione-a e use **+ → Duplicar fonte selecionada** ou **Ctrl+D**. As duas camadas têm ajustes independentes e compartilham a captura do dispositivo.
-- Ao reabrir o aplicativo, escolha **Ativar fontes**. Fontes indisponíveis permanecem na configuração e mostram o erro ao passar o mouse. Em Propriedades, reconecte ou escolha outro arquivo/dispositivo.
+- Ao reabrir o aplicativo, escolha **Ativar fontes**. A lista também oferece ações para ativar fontes salvas e substituir arquivos ou dispositivos indisponíveis, mantendo o enquadramento. As propriedades continuam disponíveis para nome, espelhamento e opacidade.
+
+Nos modelos, cancelar a seleção mantém as fontes já escolhidas na cena; você pode continuar a montagem manualmente. As proporções originais são preservadas, inclusive no modelo lado a lado.
 
 As cenas ficam em `%LOCALAPPDATA%\MiniStudioRS\scenes.json`. A estrutura anterior é migrada para a lista de fontes, preservando os nomes, referências e visibilidade. Imagens são referenciadas pelo caminho original: mantenha os arquivos nesse local. Telas e janelas são localizadas novamente pelo nome; se o título mudar ou houver mais de uma correspondência, selecione a fonte outra vez.
 
@@ -39,7 +41,7 @@ As cenas ficam em `%LOCALAPPDATA%\MiniStudioRS\scenes.json`. A estrutura anterio
 - Segure **Alt** e arraste uma alça para recortar. Arraste de volta para recuperar a parte escondida; o arquivo original permanece intacto. Fontes recortadas têm contorno verde.
 - Ao mover, a fonte encaixa nas bordas e centros da tela e das outras fontes visíveis. Segure **Ctrl** para mover sem encaixe. As linhas azuis indicam alinhamentos; as medidas mostram as distâncias até as bordas em pixels da saída 1280 × 720.
 - É possível mover e ampliar uma fonte além da tela; a saída mostra apenas a parte dentro dela.
-- O **botão direito** abre ações para ajustar à tela, centralizar, espelhar e restaurar o enquadramento. Propriedades também oferece valores de recorte e tamanho.
+- O **botão direito** abre ações para ajustar à tela, centralizar, espelhar e restaurar o enquadramento. O diálogo de Propriedades mantém os ajustes de nome, arquivo/dispositivo, espelhamento e opacidade; use o mouse na prévia para posição, tamanho e recorte.
 - **Ctrl+Z / Ctrl+Y** desfazem/refazem os gestos da prévia e as ações do menu de enquadramento na cena atual. **Esc**, durante um arraste, cancela o gesto. O cadeado impede gestos e movimentos pelo teclado.
 
 Posição, tamanho, recorte e espelhamento são salvos com cada fonte e aplicados à prévia, ao PNG e à câmera virtual. As alças e medidas aparecem somente no editor.

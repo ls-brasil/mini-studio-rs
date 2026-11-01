@@ -327,7 +327,7 @@ impl Studio {
                 if sources.is_empty() {
                     ui.add_space(14.0);
                     ui.label(muted("Esta cena está vazia."));
-                    ui.label(muted("Use + para adicionar e misturar suas fontes."));
+                    ui.label(muted("Escolha uma fonte na prévia ou use + abaixo."));
                 }
                 for source in sources.iter().rev() {
                     ui.push_id(source.id, |ui| {
@@ -374,7 +374,8 @@ impl Studio {
                                             }
                                         })
                                         .unwrap_or_else(|| {
-                                            "Fonte salva. Clique em Ativar fontes.".into()
+                                            "Fonte salva. Clique em Ativar na lista de fontes."
+                                                .into()
                                         });
                                     let r =
                                         ui.add_sized(
@@ -435,10 +436,76 @@ impl Studio {
                                         s.locked = !s.locked;
                                     }
                                 });
+                                let state = self
+                                    .runtimes
+                                    .get(&source.id)
+                                    .map(|runtime| runtime.borrow().error.clone());
+                                if state.is_none() || state.as_ref().is_some_and(Option::is_some) {
+                                    let error = state.as_ref().and_then(|error| error.as_deref());
+                                    ui.add(
+                                        Label::new(
+                                            RichText::new(
+                                                error
+                                                    .unwrap_or("Fonte salva · aguardando ativação"),
+                                            )
+                                            .size(11.0)
+                                            .color(AMBER),
+                                        )
+                                        .wrap(),
+                                    );
+                                    ui.horizontal_wrapped(|ui| {
+                                        if ui
+                                            .small_button(if error.is_some() {
+                                                "Reconectar"
+                                            } else {
+                                                "Ativar"
+                                            })
+                                            .clicked()
+                                        {
+                                            self.runtimes.remove(&source.id);
+                                            self.activate_source(ctx, source.id);
+                                        }
+                                        let image = matches!(source.input, SourceInput::Image(_));
+                                        if ui
+                                            .add_enabled(
+                                                !image || self.image_receiver.is_none(),
+                                                Button::new(if image {
+                                                    "Localizar imagem"
+                                                } else {
+                                                    "Escolher outra"
+                                                })
+                                                .small(),
+                                            )
+                                            .clicked()
+                                        {
+                                            self.replace_source_input(ctx, source.id);
+                                        }
+                                    });
+                                }
                             });
                     });
                 }
             });
+    }
+    fn replace_source_input(&mut self, ctx: &Context, id: Source) {
+        let Some(input) = self.source(id).map(|source| source.input.clone()) else {
+            return;
+        };
+        self.selected = Some(id);
+        self.properties = None;
+        match input {
+            SourceInput::Image(_) => self.load_image(ctx, None, Some(id)),
+            SourceInput::Camera(_) => self.open_picker(ctx, PickerKind::Camera, Some(id)),
+            SourceInput::Desktop(desktop) => self.open_picker(
+                ctx,
+                if desktop.window {
+                    PickerKind::Window
+                } else {
+                    PickerKind::Screen
+                },
+                Some(id),
+            ),
+        }
     }
     fn controls_dock(&mut self, ui: &mut Ui, ctx: &Context) {
         ui.label(title("Controles", 16.0));
@@ -581,106 +648,81 @@ impl Studio {
         let result = Modal::new(Id::new("source_properties"))
             .frame(modal_frame())
             .show(ctx, |ui| {
-                ui.set_width(420.0);
-                ScrollArea::vertical()
-                    .max_height((ctx.content_rect().height() - 130.0).max(200.0))
-                    .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.label(title("Propriedades da fonte", 22.0));
-                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                if small_icon(ui, Icon::Close, "Fechar propriedades").clicked() {
-                                    close = true;
-                                }
-                            });
-                        });
-                        let source = self.source_mut(id).unwrap();
-                        let label = ui.label(muted("Nome da fonte"));
-                        let response = ui
-                            .add(
-                                TextEdit::singleline(&mut source.name)
-                                    .id_salt(("source_name", id))
-                                    .char_limit(80)
-                                    .desired_width(f32::INFINITY),
-                            )
-                            .labelled_by(label.id);
-                        if response.lost_focus() && source.name.trim().is_empty() {
-                            source.name = source.input.name();
+                ui.set_width((ctx.content_rect().width() - 64.0).min(420.0));
+                ui.horizontal(|ui| {
+                    ui.label(title("Propriedades da fonte", 22.0));
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if small_icon(ui, Icon::Close, "Fechar propriedades").clicked() {
+                            close = true;
                         }
-                        ui.add(
-                            Label::new(muted(format!(
-                                "{} · {}",
-                                source.input.label(),
-                                source.input.name()
-                            )))
-                            .truncate(),
+                    });
+                });
+                ui.separator();
+                let source = self.source_mut(id).unwrap();
+                let label = ui.label(muted("Nome da fonte"));
+                let response = ui
+                    .add(
+                        TextEdit::singleline(&mut source.name)
+                            .id_salt(("source_name", id))
+                            .char_limit(80)
+                            .desired_width(f32::INFINITY),
+                    )
+                    .labelled_by(label.id);
+                if response.lost_focus() && source.name.trim().is_empty() {
+                    source.name = source.input.name();
+                }
+                ui.add(
+                    Label::new(muted(format!(
+                        "{} · {}",
+                        source.input.label(),
+                        source.input.name()
+                    )))
+                    .truncate(),
+                )
+                .on_hover_text(source.input.name());
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    let (rect, _) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::hover());
+                    paint_icon(ui.painter(), Icon::Mirror, rect, MUTED);
+                    ui.checkbox(&mut source.transform.mirror, "Espelhar horizontalmente");
+                });
+                let mut opacity = source.transform.opacity as f32 / 255.0;
+                percent(ui, "Opacidade", &mut opacity, 0.0..=1.0);
+                source.transform.opacity = (opacity * 255.0).round() as u8;
+                let image = matches!(source.input, SourceInput::Image(_));
+                ui.add_space(6.0);
+                if let Some(error) = &error {
+                    ui.add(Label::new(RichText::new(error).color(AMBER)).truncate())
+                        .on_hover_text(error);
+                }
+                ui.horizontal_wrapped(|ui| {
+                    replace = ui
+                        .add_enabled(
+                            !image || self.image_receiver.is_none(),
+                            Button::new("Escolher outra fonte"),
                         )
-                        .on_hover_text(source.input.name());
-                        ui.horizontal(|ui| {
-                            ui.checkbox(&mut source.visible, "Visível");
-                            ui.checkbox(&mut source.locked, "Bloquear na prévia");
-                        });
-                        ui.separator();
-                        section(ui, "TAMANHO E POSIÇÃO");
-                        ui.label(muted(
-                            "Percentuais da tela. Use as alças na prévia para enquadrar com o mouse.",
-                        ));
-                        percent(ui, "Horizontal", &mut source.transform.x, -1.0..=2.0);
-                        percent(ui, "Vertical", &mut source.transform.y, -1.0..=2.0);
-                        percent(ui, "Largura", &mut source.transform.width, 0.001..=4.0);
-                        percent(ui, "Altura", &mut source.transform.height, 0.001..=4.0);
-                        ui.checkbox(&mut source.transform.stretch, "Usar largura e altura exatas");
-                        ui.collapsing("Recorte da imagem", |ui| {
-                            for (i, label) in ["Esquerda", "Topo", "Direita", "Base"].iter().enumerate() {
-                                let max = 0.99 - source.transform.crop[(i + 2) % 4];
-                                percent(ui, label, &mut source.transform.crop[i], 0.0..=max);
-                            }
-                            if ui.button("Remover recorte").clicked() { source.transform.crop = [0.0; 4]; }
-                        });
-                        ui.horizontal(|ui| {
-                            let (r, _) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::hover());
-                            paint_icon(ui.painter(), Icon::Mirror, r, MUTED);
-                            ui.checkbox(&mut source.transform.mirror, "Espelhar horizontalmente");
-                        });
-                        let mut opacity = source.transform.opacity as f32 / 255.0;
-                        percent(ui, "Opacidade", &mut opacity, 0.0..=1.0);
-                        source.transform.opacity = (opacity * 255.0).round() as u8;
-                        if ui.button("Ajustar à tela").clicked() {
-                            self.fit_source(id);
-                        }
-                        if let Some(error) = &error {
-                            ui.label(RichText::new(error).color(AMBER));
-                        }
-                        ui.separator();
-                        ui.horizontal(|ui| {
-                            replace = ui.button("Escolher outra fonte").clicked();
-                            activate = ui.button("Reconectar").clicked();
-                        });
-                        ui.label(muted("Os ajustes desta fonte são salvos com a cena."));
+                        .clicked();
+                    activate = ui.button("Reconectar").clicked();
+                });
+                ui.separator();
+                ui.label(muted(
+                    "Mova e redimensione na prévia. Alt + arrastar recorta.",
+                ));
+                ui.horizontal(|ui| {
+                    ui.label(muted("Alterações salvas automaticamente."));
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         if ui.button("Concluir").clicked() {
                             close = true;
                         }
                     });
+                });
             });
         if activate {
             self.runtimes.remove(&id);
             self.activate_source(ctx, id);
         }
         if replace {
-            let input = self.source(id).unwrap().input.clone();
-            self.properties = None;
-            match input {
-                SourceInput::Image(_) => self.load_image(ctx, None, Some(id)),
-                SourceInput::Camera(_) => self.open_picker(ctx, PickerKind::Camera, Some(id)),
-                SourceInput::Desktop(d) => self.open_picker(
-                    ctx,
-                    if d.window {
-                        PickerKind::Window
-                    } else {
-                        PickerKind::Screen
-                    },
-                    Some(id),
-                ),
-            }
+            self.replace_source_input(ctx, id);
         } else if close || result.should_close() {
             if let Some(source) = self.source_mut(id)
                 && source.name.trim().is_empty()
@@ -764,10 +806,63 @@ impl Studio {
                 );
             }
         }
-        if scene.sources.is_empty() {
-            let (heading, instruction) = if !self.has_sources() {
-                ("Monte sua cena", "Use + no painel Fontes abaixo")
-            } else if self
+        if !self.has_sources() {
+            let content = Rect::from_center_size(
+                outer.center(),
+                vec2(outer.width().min(420.0) - 24.0, outer.height().min(166.0)),
+            );
+            ui.scope_builder(
+                UiBuilder::new()
+                    .max_rect(content)
+                    .layout(Layout::top_down(Align::Center)),
+                |ui| {
+                    ui.label(title("Monte sua cena", 22.0));
+                    ui.label(muted("Escolha o que deseja adicionar"));
+                    ui.add_space(6.0);
+                    ui.horizontal_wrapped(|ui| {
+                        for (label, kind) in [
+                            ("Tela", Some(PickerKind::Screen)),
+                            ("Janela", Some(PickerKind::Window)),
+                            ("Câmera", Some(PickerKind::Camera)),
+                            ("Imagem", None),
+                        ] {
+                            if ui
+                                .add_enabled(
+                                    kind.is_some() || self.image_receiver.is_none(),
+                                    Button::new(label).min_size(vec2(80.0, 32.0)),
+                                )
+                                .clicked()
+                            {
+                                if let Some(kind) = kind {
+                                    self.open_picker(ctx, kind, None);
+                                } else {
+                                    self.open_image(ctx);
+                                }
+                            }
+                        }
+                    });
+                    ui.add_enabled_ui(self.image_receiver.is_none(), |ui| {
+                        ui.menu_button("Usar modelo", |ui| {
+                            use crate::scene_ui::SceneTemplate;
+                            for (label, template) in [
+                                ("Tela + câmera", SceneTemplate::ScreenCamera),
+                                ("Janela + câmera", SceneTemplate::WindowCamera),
+                                ("Duas janelas lado a lado", SceneTemplate::SideBySide),
+                            ] {
+                                if ui.button(label).clicked() {
+                                    self.apply_scene_template(ctx, template);
+                                    ui.close();
+                                }
+                            }
+                        });
+                    });
+                    if outer.height() > 220.0 {
+                        ui.label(muted("Você também pode arrastar uma imagem para cá."));
+                    }
+                },
+            );
+        } else if scene.sources.is_empty() {
+            let (heading, instruction) = if self
                 .current_scene()
                 .sources
                 .iter()
@@ -1041,6 +1136,7 @@ impl Studio {
         }
     }
     fn draw_picker(&mut self, ctx: &Context) {
+        let template_progress = self.scene_template_progress();
         let busy = false;
         let mut selected = None;
         let mut refresh = None;
@@ -1075,6 +1171,9 @@ impl Studio {
                             }
                         });
                     });
+                    if let Some(progress) = &template_progress {
+                        ui.label(RichText::new(progress).color(ACCENT));
+                    }
                     ui.label(muted(description));
                     ui.add_space(12.0);
                     ui.add(
@@ -1158,11 +1257,12 @@ impl Studio {
             close |= result.should_close();
         }
         if close {
+            self.cancel_scene_template();
             self.picker = None;
             self.picker_target = None;
         }
         if let Some(kind) = refresh {
-            self.open_picker(ctx, kind, self.picker_target);
+            self.refresh_picker(ctx, kind);
         }
         if !close {
             match selected {
@@ -1184,7 +1284,7 @@ impl Studio {
                 ui.set_width(550.0);
                 ui.horizontal(|ui|{ui.label(title("Seu estúdio em poucos passos",24.0));ui.with_layout(Layout::right_to_left(Align::Center),|ui|{if icon_button(ui,Icon::Close,"Fechar ajuda").clicked(){close=true;}});});
                 ui.label(muted("Mini Studio 1.0.0 · Feito para criar e apresentar."));ui.add_space(12.0);
-                for (n,heading,body) in [("01","Crie suas cenas","Use + no painel Cenas, no rodapé. A cena começa vazia; dê um nome e monte sua composição. O menu ••• permite renomear e duplicar."),("02","Monte sua composição","Use + em Fontes para adicionar telas, janelas, câmeras e imagens, inclusive várias do mesmo tipo. A fonte no topo da lista aparece na frente."),("03","Encontre o melhor enquadramento","Selecione e arraste qualquer fonte na prévia. Arraste as oito alças para redimensionar; Alt recorta e Shift permite tamanho livre. Ctrl desativa o encaixe; Ctrl+Z desfaz. Use o cadeado para bloquear. Dê dois cliques para abrir Propriedades."),("04","Leve sua imagem para outro aplicativo","Inicie a câmera virtual e escolha Mini Studio RS Cam no aplicativo de chamada. Ou salve a composição como PNG.")] {
+                for (n,heading,body) in [("01","Crie suas cenas","Use + no painel Cenas e escolha um modelo para enquadrar suas fontes automaticamente, ou comece com uma cena vazia. O menu ••• permite renomear e duplicar."),("02","Monte sua composição","Na cena vazia, adicione Tela, Janela, Câmera ou Imagem direto na prévia. Use + em Fontes para adicionar mais. Fontes salvas têm ações de ativar, reconectar e substituir na própria lista."),("03","Encontre o melhor enquadramento","Selecione e arraste qualquer fonte na prévia. Arraste as oito alças para redimensionar; Alt recorta e Shift permite tamanho livre. Ctrl desativa o encaixe; Ctrl+Z desfaz. Use o cadeado para bloquear. Dê dois cliques para abrir Propriedades."),("04","Leve sua imagem para outro aplicativo","Inicie a câmera virtual e escolha Mini Studio RS Cam no aplicativo de chamada. Ou salve a composição como PNG.")] {
                     ui.horizontal_top(|ui|{badge(ui,n,ACCENT);ui.vertical(|ui|{ui.label(title(heading,15.0));ui.label(muted(body));});});ui.add_space(6.0);
                 }
                 ui.separator();
@@ -1445,6 +1545,142 @@ fn reveal_file(path: &Path) {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn compact_properties_preserve_geometry_and_fit_small_window() {
+        let mut h = Harness::new(vec2(800.0, 600.0));
+        let id = h.image("Enquadramento", [255; 4]);
+        let transform = Transform {
+            x: -0.2,
+            y: 0.3,
+            width: 1.4,
+            height: 0.6,
+            stretch: true,
+            crop: [0.1, 0.2, 0.05, 0.15],
+            ..Default::default()
+        };
+        h.app.source_mut(id).unwrap().transform = transform;
+        h.app.properties = Some(id);
+        h.frame(vec![]);
+        h.frame(vec![]);
+        for label in [
+            "Fechar propriedades",
+            "Escolher outra fonte",
+            "Reconectar",
+            "Espelhar horizontalmente",
+            "Concluir",
+        ] {
+            assert!(
+                Rect::from_min_size(Pos2::ZERO, h.size).contains_rect(h.controls[label]),
+                "{label} fora da janela"
+            );
+        }
+        h.click("Espelhar horizontalmente");
+        h.click("Concluir");
+        assert!(h.app.properties.is_none());
+        assert_eq!(
+            h.app.source(id).unwrap().transform,
+            Transform {
+                mirror: !transform.mirror,
+                ..transform
+            }
+        );
+    }
+
+    #[test]
+    fn guided_picker_advances_and_cancel_keeps_first_source() {
+        let mut h = Harness::new(vec2(1024.0, 720.0));
+        h.app
+            .apply_scene_template(&h.ctx, crate::scene_ui::SceneTemplate::ScreenCamera);
+        let picker = h.app.picker.as_mut().unwrap();
+        picker.receiver = None;
+        picker.choices = vec![Choice::Desktop(
+            crate::native_capture::SourceKind::Screen,
+            crate::native_capture::CaptureSource {
+                id: u32::MAX,
+                name: "Tela de teste inexistente".into(),
+                detail: "Teste do fluxo".into(),
+            },
+        )];
+        h.click("Tela de teste inexistente");
+        assert_eq!(h.app.current_scene().sources.len(), 1);
+        assert!(matches!(
+            h.app.picker.as_ref().map(|picker| picker.kind),
+            Some(PickerKind::Camera)
+        ));
+        assert!(
+            h.app
+                .scene_template_progress()
+                .unwrap()
+                .contains("Etapa 2 de 2")
+        );
+        h.freeze_picker();
+        h.click("Cancelar");
+        assert!(h.app.scene_template_progress().is_none());
+        assert!(h.app.picker.is_none());
+        assert_eq!(h.app.current_scene().sources.len(), 1);
+        let id = h.image("Imagem avulsa", [255; 4]);
+        assert_eq!(h.app.source(id).unwrap().transform, Transform::default());
+    }
+
+    #[test]
+    fn empty_preview_offers_direct_sources_at_small_and_large_sizes() {
+        for size in [vec2(800.0, 600.0), vec2(1440.0, 900.0)] {
+            let mut h = Harness::new(size);
+            h.frame(vec![]);
+            h.frame(vec![]);
+            for label in ["Tela", "Janela", "Câmera", "Imagem", "Usar modelo"] {
+                let bounds = h
+                    .controls
+                    .get(label)
+                    .unwrap_or_else(|| panic!("Ausente: {label}"));
+                assert!(Rect::from_min_size(Pos2::ZERO, size).contains_rect(*bounds));
+            }
+            assert!(h.app.runtimes.is_empty());
+            h.click("Tela");
+            assert!(matches!(
+                h.app.picker.as_ref().map(|picker| picker.kind),
+                Some(PickerKind::Screen)
+            ));
+            assert!(h.app.current_scene().sources.is_empty());
+            h.freeze_picker();
+            h.click("Cancelar");
+            assert!(h.app.picker.is_none());
+        }
+    }
+
+    #[test]
+    fn saved_source_can_be_replaced_from_list_without_opening_properties() {
+        use crate::scenes::{CameraSource, SavedSource};
+        let mut h = Harness::new(vec2(1024.0, 720.0));
+        h.app.current_scene_mut().sources.push(SavedSource {
+            id: 91,
+            name: "Minha câmera".into(),
+            input: SourceInput::Camera(CameraSource {
+                id: "unavailable-test-camera".into(),
+                name: "Minha câmera".into(),
+            }),
+            visible: true,
+            locked: false,
+            transform: Transform {
+                x: 0.7,
+                width: 0.25,
+                ..Default::default()
+            },
+        });
+        let before = h.app.current_scene().sources[0].clone();
+        h.frame(vec![]);
+        assert!(h.controls.contains_key("Ativar"));
+        assert!(h.app.runtimes.is_empty());
+        assert!(!h.controls.contains_key("Usar modelo"));
+        h.click("Escolher outra");
+        assert_eq!(h.app.picker_target, Some(91));
+        assert!(h.app.properties.is_none());
+        h.freeze_picker();
+        h.click("Cancelar");
+        assert_eq!(h.app.current_scene().sources[0], before);
+        assert!(h.app.runtimes.is_empty());
+    }
+
+    #[test]
     fn camera_runtime_is_kept_and_shared_across_scenes_until_stop() {
         use crate::scenes::{CameraSource, SavedScene, SavedSource};
         use crate::source_runtime::{RuntimeSource, Stream};
@@ -1556,8 +1792,17 @@ mod tests {
                 }
             }
         }
+        fn freeze_picker(&mut self) {
+            // Enumeração real pode alterar a altura do modal entre pressionar e soltar.
+            let picker = self.app.picker.as_mut().unwrap();
+            picker.receiver = None;
+            picker.choices.clear();
+            picker.message = "Nenhum dispositivo no cenário de teste.".into();
+        }
         fn click(&mut self, label: &str) {
             self.time += 0.5;
+            self.frame(vec![]);
+            self.frame(vec![]);
             self.frame(vec![]);
             let pos = self
                 .controls
@@ -1740,7 +1985,7 @@ mod tests {
         let mut h = Harness::new(vec2(1024.0, 720.0));
         h.image("Fundo", [255; 4]);
         h.click("Nova cena");
-        if let Some(crate::scene_ui::SceneDialog::Create { name }) = &mut h.app.scene_dialog {
+        if let Some(crate::scene_ui::SceneDialog::Create { name, .. }) = &mut h.app.scene_dialog {
             *name = "Apresentação".into();
         }
         h.click("Criar cena");

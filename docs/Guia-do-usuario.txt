@@ -5,18 +5,25 @@ LS Brasil
 COMECE AQUI
 1. Instale pelo arquivo MiniStudio-1.0.0-Setup.msi. O instalador cria os
    atalhos e configura a câmera virtual no Windows 11.
-2. Abra o Mini Studio. Adicione Tela, Janela, Câmera ou Imagem.
-3. Clique em uma fonte para ajustar sua aparência. O olho mostra ou oculta.
+2. Na prévia vazia, escolha Tela, Janela, Câmera ou Imagem para começar.
+   Ou clique em Usar modelo para montar uma composição com enquadramento pronto.
+3. Em + no painel Cenas, dê um nome e escolha: Cena vazia, Tela + câmera,
+   Janela + câmera ou Duas janelas lado a lado. Escolha cada fonte quando
+   solicitado. Cancelar mantém as fontes que você já escolheu.
 4. Salve a composição em PNG ou inicie a câmera virtual para usá-la em outro
    aplicativo. Nesse aplicativo, selecione "Mini Studio RS Cam".
 
 SUA COMPOSIÇÃO
-Você pode combinar uma tela OU janela, uma imagem e uma câmera.
-A imagem pode ficar no fundo ou sobre a captura. A câmera fica na frente.
-Todas as fontes preservam suas proporções. A saída tem 1280 x 720 pixels.
-Arraste a imagem na prévia para posicioná-la. Arraste a câmera para trocar
-de canto. Os controles de tamanho permitem ajustar o enquadramento.
-As guias e bordas de seleção da prévia não aparecem no arquivo ou na câmera.
+Você pode combinar várias telas, janelas, imagens e câmeras na mesma cena.
+Use + em Fontes para adicionar camadas. A fonte no topo da lista fica na frente.
+O olho mostra ou oculta e o cadeado bloqueia o movimento de uma fonte.
+Arraste na prévia para posicionar; use as alças para redimensionar. Alt recorta,
+Shift permite tamanho livre e Ctrl desativa o encaixe durante o movimento.
+Dê dois cliques na fonte para abrir suas propriedades.
+Os modelos preservam as proporções das fontes. A saída tem 1280 x 720 pixels.
+As guias e bordas de seleção não aparecem no arquivo ou na câmera.
+As cenas são salvas automaticamente. Ao reabrir, use Ativar fontes; a lista
+oferece também ações por fonte para ativar ou escolher outro arquivo/dispositivo.
 
 IMAGENS
 Abra PNG ou JPEG, ou arraste um arquivo para o Mini Studio. A transparência
@@ -29,11 +36,12 @@ Clique em "Iniciar câmera virtual" e selecione "Mini Studio RS Cam" no
 aplicativo de reunião. O Windows pode acrescentar "Windows Virtual Camera"
 ao nome. A câmera virtual envia somente vídeo, sem áudio.
 Você pode trocar, ocultar ou remover fontes durante o uso. "Parar câmera
-virtual" mantém sua composição. "Limpar composição" libera todos os
-dispositivos e encerra a saída. Fechar o Mini Studio encerra a publicação.
+virtual" mantém sua composição. Fechar o Mini Studio libera os dispositivos
+e encerra a saída.
 
 ATALHOS
-Ctrl+O: abrir imagem.  Ctrl+S: salvar PNG.  Del: remover fonte selecionada.
+Ctrl+O: abrir imagem. Ctrl+S: salvar cenas. Ctrl+Shift+S: exportar PNG.
+Ctrl+D: duplicar fonte. Ctrl+E: propriedades. Del: remover fonte selecionada.
 F1: ajuda e tamanho da interface.  Esc: fechar diálogo ou desmarcar fonte.
 Tab: navegar entre os controles. Enter ou Espaço: ativar o controle.
 Seus ajustes de enquadramento e interface são lembrados. Fontes e dispositivos

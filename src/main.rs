@@ -77,9 +77,13 @@ impl Options {
                 }
                 "--ui-exit" => options.ui_exit = true,
                 "--ui-dialog" => {
-                    let dialog = args.next().ok_or("Informe help, setup ou scene.")?;
-                    if !matches!(dialog.as_str(), "help" | "setup" | "scene") {
-                        return Err("Diálogo inválido: use help, setup ou scene.".into());
+                    let dialog = args
+                        .next()
+                        .ok_or("Informe help, setup, scene ou properties.")?;
+                    if !matches!(dialog.as_str(), "help" | "setup" | "scene" | "properties") {
+                        return Err(
+                            "Diálogo inválido: use help, setup, scene ou properties.".into()
+                        );
                     }
                     options.ui_dialog = Some(dialog);
                 }
@@ -106,6 +110,13 @@ impl Options {
                 }
                 _ => return Err(format!("Argumento desconhecido: {arg}")),
             }
+        }
+        if options.ui_dialog.as_deref() == Some("properties")
+            && (options.screenshot.is_none() || options.benchmark.is_some())
+        {
+            return Err(
+                "O diálogo properties exige --ui-screenshot e não aceita benchmark.".into(),
+            );
         }
         if !options.seconds.is_finite() || !(1.0..=300.0).contains(&options.seconds) {
             return Err("Duração deve estar entre 1 e 300 segundos.".into());
@@ -155,6 +166,7 @@ struct Studio {
     saved_scenes: scenes::SceneLibrary,
     scenes_load_error: Option<String>,
     scene_dialog: Option<scene_ui::SceneDialog>,
+    scene_template: Option<scene_ui::TemplateSetup>,
     runtimes: HashMap<Source, Rc<RefCell<RuntimeSource>>>,
     next_source_id: u64,
     selected: Option<Source>,
@@ -233,6 +245,7 @@ impl Studio {
             saved_scenes: scenes::SceneLibrary::default(),
             scenes_load_error: None,
             scene_dialog: None,
+            scene_template: None,
             runtimes: HashMap::new(),
             next_source_id: 1,
             selected: None,
@@ -278,6 +291,7 @@ impl Studio {
         if app.options.ui_dialog.as_deref() == Some("scene") {
             app.scene_dialog = Some(scene_ui::SceneDialog::Create {
                 name: "Nova cena".into(),
+                template: scene_ui::SceneTemplate::Empty,
             });
         }
         if let Some((kind, title)) = &app.options.benchmark {
@@ -294,6 +308,30 @@ impl Studio {
         }
         for path in app.options.image.clone() {
             app.add_input(ctx, SourceInput::Image(path));
+        }
+        if app.options.ui_dialog.as_deref() == Some("properties")
+            && app.options.screenshot.is_some()
+        {
+            app.accept_image(
+                ctx,
+                image_source::LoadedImage {
+                    path: PathBuf::from("imagem-de-exemplo.png"),
+                    name: "Imagem de exemplo".into(),
+                    pixels: composition::Pixels {
+                        width: 320,
+                        height: 180,
+                        rgba: image::RgbaImage::from_pixel(
+                            320,
+                            180,
+                            image::Rgba([40, 70, 85, 255]),
+                        )
+                        .into_raw()
+                        .into(),
+                    },
+                },
+                None,
+            );
+            app.properties = app.selected;
         }
         app
     }
@@ -380,6 +418,7 @@ impl Studio {
         id
     }
     fn accept_input(&mut self, ctx: &egui::Context, input: SourceInput) {
+        self.picker = None;
         if let Some(id) = self.picker_target.take() {
             if let Some(source) = self.source_mut(id) {
                 source.input = input;
@@ -387,14 +426,17 @@ impl Studio {
                 self.activate_source(ctx, id);
             }
         } else {
-            self.add_input(ctx, input);
+            let id = self.add_input(ctx, input);
+            self.accept_template_source(ctx, id);
         }
-        self.picker = None;
     }
     fn open_image(&mut self, ctx: &egui::Context) {
         self.load_image(ctx, None, None);
     }
     fn load_image(&mut self, ctx: &egui::Context, path: Option<PathBuf>, target: Option<Source>) {
+        self.cancel_scene_template();
+        self.picker = None;
+        self.picker_target = None;
         let (sender, receiver) = mpsc::channel();
         let context = ctx.clone();
         std::thread::spawn(move || {
@@ -446,6 +488,7 @@ impl Studio {
         self.notice = "Imagem adicionada à cena.".into();
     }
     fn open_picker(&mut self, ctx: &egui::Context, kind: PickerKind, target: Option<Source>) {
+        self.cancel_scene_template();
         let (sender, receiver) = mpsc::channel();
         let context = ctx.clone();
         std::thread::spawn(move || {
@@ -601,6 +644,7 @@ impl Studio {
         }
     }
     fn clear_scene_runtime(&mut self) {
+        self.cancel_scene_template();
         let retained: HashSet<_> = self
             .scenes
             .scenes
