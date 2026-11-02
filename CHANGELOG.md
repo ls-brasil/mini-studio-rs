@@ -2,6 +2,8 @@
 
 ## Em desenvolvimento
 
+- Mover, centralizar, recortar e redimensionar proporcionalmente uma fonte preserva agora seu modo de proporção, inclusive quando a janela capturada muda de tamanho. Esticamento continua disponível com Shift ao redimensionar e é preservado nos usos já configurados assim.
+- Validação da correção de proporção: 56 testes passaram, sete integrações externas permaneceram ignoradas; formatação, Clippy e compilação debug concluídos sem erros. A cena relatada não foi validada visualmente com o VS Code, pois esse uso foi removido durante a conferência.
 - Configuração da biblioteca com prévia visual à direita para mover, redimensionar, recortar com Alt, espelhar, ajustar opacidade e restaurar o enquadramento. As edições aplicam-se a todos os usos da fonte nas cenas, inclusive ocultos ou bloqueados; novos usos recebem o enquadramento salvo na biblioteca.
 - Validação: 55 testes passaram, sete testes dependentes de dispositivos/componentes externos permaneceram ignorados, Clippy sem avisos e compilação debug concluída. Testes de interação em 800×600 e 1440×900 cobrem propagação, desfazer/refazer e novos usos; persistência de fonte sem uso e conferência visual da tela no aplicativo também verificadas.
 - Prévia disponível também para fontes ainda sem uso, com reaproveitamento da captura existente quando disponível. Desfazer/refazer da biblioteca restaura os enquadramentos anteriores por uso durante a sessão de edição; a edição direta nas cenas continua individual. README e guia atualizados.

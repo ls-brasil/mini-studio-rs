@@ -131,7 +131,10 @@ impl Drag {
                 t.height = h;
             }
         }
-        t.stretch = true;
+        // Only an explicit free resize opts into distortion. Moving, cropping and
+        // proportional resizing must keep following changes in capture dimensions.
+        t.stretch = self.original.stretch
+            || (free && !self.crop && matches!(self.handle, Handle::Resize(_, _)));
         t.sanitize();
         t
     }
@@ -243,6 +246,20 @@ mod tests {
             start,
             handle,
             crop,
+        }
+    }
+    #[test]
+    fn normal_edits_preserve_fit_and_only_free_resize_enables_stretch() {
+        for handle in [Handle::Move, Handle::Resize(1, 1)] {
+            for crop in [false, true] {
+                let mut d = drag(handle, crop);
+                d.original.stretch = false;
+                assert!(!d.apply(vec2(0.1, 0.05), false).stretch);
+                assert_eq!(
+                    d.apply(vec2(0.1, 0.05), true).stretch,
+                    !crop && matches!(handle, Handle::Resize(_, _))
+                );
+            }
         }
     }
     #[test]

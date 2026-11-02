@@ -341,7 +341,6 @@ impl Studio {
                 source.transform.y = (1.0 - rect[3] / HEIGHT as f32) * 0.5;
                 source.transform.width = rect[2] / WIDTH as f32;
                 source.transform.height = rect[3] / HEIGHT as f32;
-                source.transform.stretch = true;
             }
         }
     }
